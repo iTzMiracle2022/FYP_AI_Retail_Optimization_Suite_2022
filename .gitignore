@@ -1,0 +1,71 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Environments and secrets
+.env
+.env.*
+!.env.example
+.venv/
+venv/
+env/
+torch_env/
+
+# Node / frontend
+node_modules/
+frontend/node_modules/
+dist/
+build/
+frontend/dist/
+frontend/build/
+
+# Logs and OS files
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.DS_Store
+Thumbs.db
+
+# Local caches and generated artifacts
+.cache/
+backend/cache/*
+!backend/cache/.gitkeep
+*.joblib
+*.pkl
+*.pickle
+*.parquet
+*.model
+*.h5
+
+# Generated reports/artifacts that should stay local unless explicitly curated
+reports/
+Diagrams/
+Logo/
+fyp documentation/
+
+
+# SQLite databases
+*.db
+*.sqlite
+*.sqlite3
+backend/erp_sample.db
+
+# Optional large datasets
+# Keep safe demo/sample datasets intentionally if needed for FYP demo.
+# Uncomment these lines before publishing if full datasets are private or too large.
+# backend/data/raw/*.csv
+# backend/data/processed/*.json
+# data/processed/*.csv
+
+# IDE
+.idea/
+.vscode/
+
+
+# Archive folders
+archive/
