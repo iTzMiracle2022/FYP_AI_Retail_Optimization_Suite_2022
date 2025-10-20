@@ -1,0 +1,105 @@
+/* MarketingFooter.css */
+.marketing-footer {
+    position: relative;
+    padding: 5rem 2rem 2rem;
+    background: radial-gradient(circle at top right, rgba(37, 99, 235, 0.06), transparent 40%),
+                radial-gradient(circle at bottom left, rgba(124, 58, 237, 0.06), transparent 40%),
+                linear-gradient(180deg, #0F172A 0%, #0B1120 100%);
+    color: white;
+    overflow: hidden;
+}
+
+.marketing-footer::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background-image: radial-gradient(rgba(255, 255, 255, 0.05) 1px, transparent 1px);
+    background-size: 24px 24px;
+    opacity: 0.5;
+    pointer-events: none;
+}
+
+.footer-top-border {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(37, 99, 235, 0.4), rgba(124, 58, 237, 0.4), transparent);
+}
+
+.footer-logo {
+    height: 32px;
+    transition: all 0.22s ease-out;
+    filter: drop-shadow(0 0 0 transparent);
+}
+
+.footer-logo:hover {
+    filter: drop-shadow(0 0 12px rgba(255, 255, 255, 0.2));
+    opacity: 0.9;
+}
+
+.footer-link {
+    color: #94A3B8;
+    font-size: 0.9rem;
+    text-decoration: none;
+    transition: all 0.22s ease-out;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    position: relative;
+}
+
+.footer-link .link-arrow {
+    opacity: 0;
+    transform: translateX(-4px);
+    transition: all 0.22s ease-out;
+    font-size: 0.75rem;
+}
+
+.footer-link:hover {
+    color: #38BDF8; /* Cyan-blue */
+    transform: translateX(4px);
+}
+
+.footer-link:hover .link-arrow {
+    opacity: 1;
+    transform: translateX(0);
+}
+
+.footer-roadmap-link {
+    color: #3B82F6;
+    font-size: 0.9rem;
+    text-decoration: none;
+    font-weight: 700;
+    transition: all 0.22s ease-out;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.footer-roadmap-link:hover {
+    color: #60A5FA;
+    transform: translateX(4px);
+}
+
+.footer-bottom {
+    position: relative;
+    border-top: 1px solid rgba(148, 163, 184, 0.15);
+    padding-top: 2rem;
+    margin-top: 4rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 1rem;
+    z-index: 1;
+}
+
+@media (max-width: 640px) {
+    .footer-bottom {
+        flex-direction: column;
+        justify-content: center;
+        text-align: center;
+    }
+}
