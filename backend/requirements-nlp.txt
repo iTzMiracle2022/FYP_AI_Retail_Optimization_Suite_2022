@@ -1,0 +1,21 @@
+# Optional advanced NLP package dependencies for Marketing NLP Feedback Intelligence.
+# This file installs Python packages only; it does not install model weights.
+#
+# Expected model weights are documented in NLP_MODELS.md and must already exist
+# in the local Hugging Face cache or a local model path. The backend uses
+# local_files_only=True and falls back gracefully if models are unavailable.
+#
+# Install PyTorch separately according to your CUDA/CPU environment:
+# https://pytorch.org/get-started/locally/
+#
+# This project supports fallback mode if these packages are not installed.
+
+transformers
+sentence-transformers
+keybert
+langdetect
+vaderSentiment
+nltk
+sentencepiece
+tiktoken
+protobuf

@@ -1,0 +1,45 @@
+# AI Retail Optimization Suite — Backend (Flask API + ML)
+# Python 3.10+ recommended. Install: pip install -r requirements.txt
+
+python-dotenv>=1.0.0
+
+# Core data & ML
+pandas>=2.0.0
+numpy>=1.25.0
+scipy>=1.11.0
+scikit-learn>=1.3.0
+nltk>=3.8.1
+
+# Web & database
+flask>=3.0.0
+flask-cors>=4.0.0
+Flask-Bcrypt
+Flask-Mail
+pymongo>=4.6.0
+psutil
+requests
+SQLAlchemy
+
+# Reports (PDF export in api/reports)
+reportlab>=4.0.0
+
+# Model Serialization
+joblib>=1.3.0
+
+# 🔐 Security & Auth (Google Login)
+google-auth>=2.22.0
+google-auth-oauthlib>=1.0.0
+google-auth-httplib2>=0.1.0
+PyJWT
+
+# Optional: class imbalance experiments / notebooks
+imbalanced-learn>=0.11.0
+
+# Optional: time-series / notebooks
+statsmodels>=0.14.0
+matplotlib>=3.7.0
+seaborn>=0.12.0
+jupyter>=1.0.0
+ipykernel>=6.25.0
+
+# GPU (RAPIDS / cuML): not installed via pip by default — see backend/GPU_SETUP.md

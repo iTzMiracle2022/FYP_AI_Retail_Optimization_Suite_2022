@@ -1,0 +1,31 @@
+# Optional GPU acceleration dependencies for RAPIDS/cuML/cuDF
+# Install this file only in a CUDA-supported environment.
+#
+# Main backend dependencies:
+#   pip install -r requirements.txt
+#
+# Optional NLP dependencies:
+#   pip install -r requirements-nlp.txt
+#
+# Optional RAPIDS GPU acceleration:
+#   pip install -r requirements-gpu.txt
+#
+# IMPORTANT:
+# RAPIDS/cuDF/cuML packages must match your CUDA version.
+# For CUDA 12 environments, use CUDA 12 RAPIDS wheels.
+# If these packages are unavailable or incompatible, the backend must fall back to sklearn CPU mode.
+#
+# Current known GPU/PyTorch environment:
+#   torch: 2.5.1+cu121
+#   GPU: NVIDIA GeForce RTX 3050 6GB Laptop GPU
+#   CUDA runtime reported by torch: 12.1
+#
+# PyTorch is installed separately according to CUDA/CPU environment.
+# RAPIDS is optional and must not be required for CPU-only setup.
+
+--extra-index-url https://pypi.nvidia.com
+
+cudf-cu12
+cuml-cu12
+rmm-cu12
+cupy-cuda12x
