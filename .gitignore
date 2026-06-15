@@ -69,3 +69,10 @@ backend/erp_sample.db
 
 # Archive folders
 archive/
+
+# Local diagrams and pictures
+system_architecture.mmd
+data_ml_workflow.mmd
+system_architecture.png
+data_ml_workflow.png
+
