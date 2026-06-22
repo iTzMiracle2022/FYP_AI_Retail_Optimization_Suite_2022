@@ -43,10 +43,10 @@ backend/cache/*
 *.h5
 
 # Generated reports/artifacts that should stay local unless explicitly curated
-reports/
-Diagrams/
-Logo/
-fyp documentation/
+/reports/
+/Diagrams/
+/Logo/
+/fyp documentation/
 
 
 # SQLite databases
