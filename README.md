@@ -1,4 +1,6 @@
-# 🌌 Retail AI Suite
+<p align="center">
+  <img src="frontend/src/assets/Logo/retail-ai-suite-logo-color-horizontal.png" alt="Retail AI Suite Logo" width="550" />
+</p>
 
 <p align="center">
   <b>AI-Powered Retail Optimization Dashboard</b><br/>
