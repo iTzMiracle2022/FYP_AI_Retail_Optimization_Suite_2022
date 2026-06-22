@@ -1,0 +1,175 @@
+.hero-animated-section {
+    position: relative;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    padding-top: 5rem;
+    background: linear-gradient(180deg, #F0F4FF 0%, #FAFBFF 100%);
+    overflow: hidden;
+    perspective: 1000px;
+}
+
+/* Blobs */
+.hero-bg-blobs {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    will-change: transform;
+    transform: translate3d(calc(var(--mouse-x) * 25px), calc(var(--mouse-y) * 25px), 0);
+    transition: transform 0.3s ease-out;
+    z-index: 1;
+}
+
+.hero-blob {
+    position: absolute;
+    border-radius: 50%;
+    filter: blur(80px);
+    opacity: 0.15;
+    animation: hero-blob-float 20s ease-in-out infinite alternate;
+}
+
+.h-blob-1 {
+    top: 5%;
+    left: -5%;
+    width: 500px;
+    height: 500px;
+    background: linear-gradient(135deg, #3b82f6, #06b6d4);
+}
+
+.h-blob-2 {
+    bottom: -10%;
+    right: 5%;
+    width: 600px;
+    height: 600px;
+    background: linear-gradient(135deg, #8b5cf6, #3b82f6);
+    animation-delay: -5s;
+    animation-direction: alternate-reverse;
+}
+
+.h-blob-3 {
+    top: 40%;
+    left: 45%;
+    width: 400px;
+    height: 400px;
+    background: linear-gradient(135deg, #06b6d4, #a855f7);
+    animation-delay: -10s;
+    opacity: 0.1;
+}
+
+@keyframes hero-blob-float {
+    0% { transform: translate(0, 0) scale(1); }
+    100% { transform: translate(30px, -30px) scale(1.05); }
+}
+
+/* Grid */
+.hero-bg-grid {
+    position: absolute;
+    inset: -50px;
+    background-image: radial-gradient(circle, #CBD5E1 1px, transparent 1px);
+    background-size: 32px 32px;
+    opacity: 0.35;
+    pointer-events: none;
+    will-change: transform;
+    transform: translate3d(calc(var(--mouse-x) * 10px), calc(var(--mouse-y) * 10px), 0);
+    transition: transform 0.3s ease-out;
+    z-index: 2;
+    mask-image: radial-gradient(ellipse at center, black 40%, transparent 80%);
+    -webkit-mask-image: radial-gradient(ellipse at center, black 40%, transparent 80%);
+}
+
+/* Floating Elements */
+.hero-floating-elements {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    will-change: transform;
+    transform: translate3d(calc(var(--mouse-x) * -18px), calc(var(--mouse-y) * -18px), 0);
+    transition: transform 0.3s ease-out;
+    z-index: 3;
+}
+
+.hero-css-dot {
+    position: absolute;
+    border-radius: 50%;
+    animation: hero-float-tiny 8s ease-in-out infinite alternate;
+}
+
+.hero-css-bubble {
+    filter: blur(4px);
+}
+
+@keyframes hero-float-tiny {
+    0% { transform: translateY(0); }
+    100% { transform: translateY(-20px); }
+}
+
+/* Content */
+.hero-content {
+    position: relative;
+    z-index: 10;
+    width: 100%;
+}
+
+/* Hero Parallax Classes for Children */
+.hero-parallax-badge {
+    will-change: transform;
+    transform: translate3d(calc(var(--mouse-x) * 5px), calc(var(--mouse-y) * 5px), 0);
+    transition: transform 0.3s ease-out;
+    display: inline-block;
+}
+
+.hero-parallax-dashboard {
+    will-change: transform;
+    transform: translate3d(calc(var(--mouse-x) * -10px), calc(var(--mouse-y) * -10px), 0)
+               rotateX(calc(var(--mouse-y) * 2deg))
+               rotateY(calc(var(--mouse-x) * -4deg));
+    transition: transform 0.3s ease-out;
+    transform-style: preserve-3d;
+    width: 100%;
+}
+
+/* Trust Badge */
+.hero-trust-badge {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.85rem;
+    color: #64748B;
+    font-weight: 600;
+    transition: color 0.2s ease;
+    cursor: default;
+}
+
+.hero-trust-badge:hover {
+    color: #2563EB;
+}
+
+/* Button Hover overrides */
+.hero-cta-btn {
+    background: #2563EB;
+    color: white;
+    border: none;
+    padding: 0.85rem 2rem;
+    border-radius: 12px;
+    font-size: 0.95rem;
+    font-weight: 700;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    box-shadow: 0 6px 20px rgba(37, 99, 235, 0.3);
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.hero-cta-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 10px 25px rgba(37, 99, 235, 0.4);
+}
+
+.hero-cta-arrow {
+    transition: transform 0.3s ease;
+}
+
+.hero-cta-btn:hover .hero-cta-arrow {
+    transform: translateX(4px);
+}

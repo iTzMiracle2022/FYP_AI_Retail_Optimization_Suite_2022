@@ -43,7 +43,7 @@ This document contains detailed, empirically-verified test cases for every scree
 | TC-4 | 1. Go to login page.<br>2. Input correct email and incorrect password.<br>3. Click 'Sign In'. | Email: 'abdulrafayza01@gmail.com'<br>Password: 'WrongPassword1' | Authentication rejected by backend. Displays red error box with 'Invalid password'. | Rejected with HTTP 401. Red banner containing 'Invalid password' appeared below heading. | Pass |
 | TC-5 | 1. Go to login page.<br>2. Input non-registered email.<br>3. Click 'Sign In'. | Email: 'nonexistent@retail.ai'<br>Password: 'Password123' | Authentication rejected. Displays red error box with 'User not found'. | HTTP 404 response received. UI displayed 'User not found' error banner. | Pass |
 | TC-6 | 1. Input password 'Password123' in Password input.<br>2. Click the 'Eye' icon button inside the input field. | Click password visibility toggle | Toggles the input field type from 'password' to 'text' to show plain text. | Input field toggled to type='text' and the characters became visible. Icon changed to EyeOff. | Pass |
-| TC-7 | 1. Click on the Google OAuth login button component.<br>2. Complete the Google account picker pop-up selection. | Click Google Sign-in button | Detects active Google session, authenticates backend, and redirects to dashboard. | Google OAuth popup handled. Logs in user automatically as MANAGER, redirecting to /dashboard. Screenshot: `07_Dashboard_loaded.png`. | Pass |
+|TC-7|1. Click on the Google OAuth login button component.<br>2. Complete the Google account picker pop-up selection.|Click Google Sign-in button|Detects active Google session, authenticates backend, and redirects to dashboard.|Google OAuth button rendered, but complete OAuth authentication could not be fully verified in the local testing environment.|Fail|
 
 ---
 
@@ -63,7 +63,7 @@ This document contains detailed, empirically-verified test cases for every scree
 | TC-9 | 1. Input credentials of a user already registered.<br>2. Click 'Sign Up'. | Name: 'Abdul Rafay'<br>Email: 'abdulrafayza01@gmail.com'<br>Password: 'Password123' | Rejects registration, showing error message: 'Email already registered and active.' | Returned HTTP 400. UI displayed error banner: 'Email already registered and active.' | Pass |
 | TC-10 | 1. Input blank name, email, and password.<br>2. Click 'Sign Up'. | Name: ''<br>Email: 'newtester2@retail.ai'<br>Password: 'Password123' | HTML5 validation catches empty name and halts form submission. | Browser native validation tooltip popped up: 'Please fill out this field'. Form was not sent. | Pass |
 | TC-11 | 1. Input invalid email format.<br>2. Click 'Sign Up'. | Name: 'Tester'<br>Email: 'invalidemail'<br>Password: 'Password123' | Browser halts form submission due to email input type validation. | Browser blocked submit and displayed validation tooltip: 'Please include an @ in the email address.' | Pass |
-| TC-12 | 1. Input a very short password.<br>2. Click 'Sign Up'. | Name: 'Tester'<br>Email: 'test2@retail.ai'<br>Password: '123' | App accepts registration (no frontend password strength limits exist in code) but backend hashes it safely. | Registration succeeded and prompt to check email was displayed. Weak password allowed due to absence of strict validation in code. | Pass |
+|TC-12|1. Input a very short password.<br>2. Click 'Sign Up'.|Name: 'Tester'<br>Email: 'test2@retail.ai'<br>Password: '123'|System should reject weak passwords and show a password strength validation message.|System accepted weak password '123' and allowed registration because strict password validation was not enforced.|Fail|
 
 ---
 
@@ -132,7 +132,7 @@ This document contains detailed, empirically-verified test cases for every scree
 
 | S. No | Steps | Input Data | Expected Result | Actual Result | Pass/Fail |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| TC-21 | 1. Log in and access /dashboard<br>2. Observe KPI boxes (Revenue, Customers, Datasets, Churn, Stock, Reports). | Load dashboard page | KPIs fetch and display values from seeded DB: Revenue ($12.4M), Customers (142,500), Active Datasets (14), Alerts (12). | KPI cards loaded immediately. Total Revenue showed '$12.4M' (with real data from raw ecommerce csv aggregated). Datasets counter showed '3'. Screenshot: `07_Dashboard_loaded.png`. | Pass |
+|TC-21|1. Log in and access /dashboard<br>2. Observe KPI boxes (Revenue, Customers, Datasets, Churn, Stock, Reports).|Load dashboard page|KPIs fetch and display values from seeded DB: Revenue ($12.4M), Customers (142,500), Active Datasets (14), Alerts (12).|Dashboard loaded successfully, but Active Datasets counter showed 3 instead of the expected 14.|Fail|
 | TC-22 | 1. Observe 'Revenue Trend' chart rendering in main panel. | View Revenue Trend chart | SVG Area line chart is drawn, plotting purchase amounts by date dynamically. | Line chart drawn using Recharts. Trend path displayed correct curves matching datasets. | Pass |
 | TC-23 | 1. Observe 'Module Activity' chart rendering in middle panel. | View Module Activity chart | Bar chart displays usage segments (Sales, Churn, Inventory, Marketing) correctly. | Bar chart rendered displaying the 4 bars representing category usage. | Pass |
 | TC-24 | 1. Click 'Refresh' button in dashboard header. | Click Refresh button | Triggers background fetch to `/api/system/dashboard-summary` and updates KPI counts. | Triggered AJAX request, KPIs briefly loaded, metrics updated with latest values. | Pass |
@@ -179,7 +179,7 @@ This document contains detailed, empirically-verified test cases for every scree
 | TC-35 | 1. Move 'Forecast Horizon' slider from 30 days to 60 days. | Slider value: 60 | Triggers recalculated forecast plot spanning 60 days in advance. | Graph x-axis extended to 60 days. Forecast data updated automatically. | Pass |
 | TC-36 | 1. Click 'Stock Alert list' panel tab. | Click Alerts Tab | Lists items where current inventory levels fall below calculated demand forecast threshold. | Displays table containing low stock alerts with red alert labels for critical items. Screenshot: `09_InventoryForecast_alerts.png`. | Pass |
 | TC-37 | 1. Trigger demand forecast analysis.<br>2. Verify system model evaluation logs. | Generate forecast | Trained ARIMA weights are logged. Accuracy score displayed on UI panel. | UI displayed ARIMA fit accuracy score: 92.5%. Record verified in MongoDB ml_models. | Pass |
-| TC-38 | 1. Select product item in table.<br>2. Click 'Optimize Orders (Q-Learning)' button. | Product: 'Prod_0023'<br>Click Optimize | Computes a suggested restock quantity using the system's defined replenishment logic. | No reinforcement Q-Learning agent exists in the backend. The button computed a suggested replenishment order using a deterministic 20% safety-buffer rule, returning 173 units. Confirmed in inventory_ai_model_audit_report.md, Part 2. | Pass |
+|TC-38|1. Select product item in table.<br>2. Click 'Optimize Orders (Q-Learning)' button.|Product: 'Prod_0023'<br>Click Optimize|System should compute reorder quantity using the Q-Learning optimization model.|System returned reorder quantity using deterministic safety-buffer logic; no Q-Learning backend agent was found.|Fail|
 | TC-39 | 1. In store filter dropdown, select specific store code. | Filter Store: 'S_002' | Restricts forecast charts and stock lists strictly to Store S_002 datasets. | Visuals filtered. Only S_002 items listed in alerts table. | Pass |
 | TC-40 | 1. Click 'Export PDF Report' button. | Click Export PDF | Sends forecast arrays to backend PDF compiler (ReportLab) and initiates download. | PDF generated and downloaded. Verified layout contains branding header and data tables. | Pass |
 
@@ -494,7 +494,7 @@ This document contains detailed, empirically-verified test cases for every scree
 
 | S. No | Steps | Input Data | Expected Result | Actual Result | Pass/Fail |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| TC-98 | 1. Navigate to /security.<br>2. Observe features. | Go to /security | Renders security page detailing database encryption (AES-256), token auth, and isolated sessions. | Security page rendered detailing security protocols. Screenshot: `26_SecurityPage_loaded.png`. | Pass |
+|TC-98|1. Navigate to /security.<br>2. Observe features.|Go to /security|Renders security page detailing database encryption (AES-256), token auth, and isolated sessions.|Security page rendered successfully, but full backend encryption/compliance verification was not completed during local testing.|Fail|
 | TC-99 | 1. Click on compliance details. | Check credentials details | Shows compliance structure description. | Details block expanded showing security standards. | Pass |
 
 ---
@@ -792,11 +792,11 @@ This document contains detailed, empirically-verified test cases for every scree
 ## Final Verification Summary
 
 - **Total Test Cases Executed:** 149
-- **Total Pass:** 149
-- **Total Fail:** 0
+- **Total Pass:** 144
+- **Total Fail:** 5
 - **Total Blocked:** 0
 
 ### Summary of Observed Platform Warnings
 - **Google Client ID Configuration Warning:** In unauthenticated views, the console prints a minor warning `Google Client ID not configured` (origin error fallback). This is solved when the Google OAuth setup completeness fallback is triggered or real user credentials profiles are loaded.
-- **Q-Learning Algorithm Absence:** In Part 2 of the AI Model Audit Report (`inventory_ai_model_audit_report.md`), it is honestly documented that Q-learning is not implemented in the backend code and optimization recommendations are calculated using a deterministic safety buffer rule. This is not marked as a failure because the audit reports themselves explicitly document it as a design fact.
+- **Q-Learning Algorithm Absence:** In Part 2 of the AI Model Audit Report (`inventory_ai_model_audit_report.md`), it is honestly documented that Q-learning is not implemented in the backend code and optimization recommendations are calculated using a deterministic safety buffer rule. This is marked as a failure in the test case verification (TC-38) to reflect the implementation gap.
 - **ARIMA Bypassing:** When testing inventory demand forecasts using the default `retail_store_inventory.csv`, the model detects the existing `Demand Forecast` column in the dataset and triggers a bypass, falling back to database aggregation instead of executing ARIMA. ARIMA execution was verified by simulating a run on a dataset missing the demand forecast header.
