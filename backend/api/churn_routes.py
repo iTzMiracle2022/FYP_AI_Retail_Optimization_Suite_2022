@@ -9,6 +9,7 @@ from utils.churn_chart_mapper import generate_chart_data
 churn_bp = Blueprint('churn', __name__, url_prefix='/api/churn')
 predictor = ChurnPredictor()
 loader = DataLoader()
+from config import config
 
 
 import os
@@ -874,7 +875,14 @@ def predict_churn():
     if not include_customer_transactions:
         dashboard_cache = _load_customer_dashboard_cache(dataset_id, df, has_actual_churn_label, force_retune=force_retune)
     cached_model_metadata = None if force_retune else _load_cached_model_metadata(dataset_id, df)
-    fast_dashboard_response = bool(dashboard_cache and cached_model_metadata and not include_customer_transactions)
+    predictions_json_path = config.PROCESSED_DATA_DIR / f"{dataset_id}_churn_predictions.json"
+    fast_dashboard_response = bool(
+        dashboard_cache 
+        and cached_model_metadata 
+        and predictions_json_path.exists()
+        and os.path.getsize(str(predictions_json_path)) > 10
+        and not include_customer_transactions
+    )
 
     if fast_dashboard_response:
         ai_model_evaluation = dict(cached_model_metadata.get("ai_model_evaluation") or {})
@@ -981,12 +989,16 @@ def predict_churn():
                     "prediction_type": "churn",
                     "user_email": user_email,
                 },
-                {"_id": 1},
+                {"_id": 1, "file_path": 1},
                 sort=[("generated_date", -1)]
             )
             if latest_prediction:
-                prediction_id = str(latest_prediction["_id"])
-                print(f"✅ Reused cached churn prediction record: {prediction_id}")
+                file_path = latest_prediction.get("file_path")
+                if file_path and os.path.exists(file_path) and os.path.getsize(file_path) > 10:
+                    prediction_id = str(latest_prediction["_id"])
+                    print(f"✅ Reused cached churn prediction record: {prediction_id}")
+                else:
+                    print(f"⚠️ Churn prediction file missing or empty on disk: {file_path}. Invalidating cache and re-running.")
         except Exception as exc:
             print(f"⚠️ Cached prediction record lookup failed. Reason: {type(exc).__name__}: {str(exc)[:180]}")
 

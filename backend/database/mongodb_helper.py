@@ -709,122 +709,138 @@ class MongoDBHelper:
             # --- OVERRIDE WITH REAL DATASET METRICS ---
             revenue_trend = []
             real_inventory_data = None
+            
+            # Helper imports
             try:
                 import pandas as pd
                 from pathlib import Path
                 import json
-                
-                # 1. Total Revenue & True Total Customers from Raw Dataset
-
+                import os
                 raw_data_dir = Path(__file__).parent.parent / 'data' / 'raw'
-                ecommerce_path = raw_data_dir / 'ecommerce_customer_data_custom_ratios.csv'
-                if ecommerce_path.exists():
-                    df = pd.read_csv(ecommerce_path)
-                    if 'Total Purchase Amount' in df.columns:
-                        total_revenue = float(df['Total Purchase Amount'].sum())
-                    if 'Customer Name' in df.columns:
-                        total_customers = int(df['Customer Name'].nunique())
-                    
-                    # 1b. Real Revenue Trend
-                    if 'Purchase Date' in df.columns and 'Total Purchase Amount' in df.columns:
-                        df['Purchase Date'] = pd.to_datetime(df['Purchase Date'], errors='coerce')
+            except Exception as e:
+                print(f"Warning: Initialization error in dashboard metrics calculations: {e}")
+                raw_data_dir = None
+
+            # 1. Total Revenue & True Total Customers from Raw Dataset
+            if raw_data_dir:
+                try:
+                    ecommerce_path = raw_data_dir / 'ecommerce_customer_data_custom_ratios.csv'
+                    if ecommerce_path.exists():
+                        df = pd.read_csv(ecommerce_path)
+                        if 'Total Purchase Amount' in df.columns:
+                            total_revenue = float(df['Total Purchase Amount'].sum())
+                        if 'Customer Name' in df.columns:
+                            total_customers = int(df['Customer Name'].nunique())
                         
-                        latest_date = df['Purchase Date'].max()
-                        if pd.notna(latest_date):
-                            # Ensure exact calendar days
-                            date_range = pd.date_range(end=latest_date.date(), periods=rev_days, freq='D')
+                        # 1b. Real Revenue Trend
+                        if 'Purchase Date' in df.columns and 'Total Purchase Amount' in df.columns:
+                            df['Purchase Date'] = pd.to_datetime(df['Purchase Date'], errors='coerce')
                             
-                            daily_rev = df.groupby(df['Purchase Date'].dt.date)['Total Purchase Amount'].sum()
-                            daily_rev.index = pd.to_datetime(daily_rev.index)
-                            
-                            # Reindex to fill missing days with 0
-                            daily_rev = daily_rev.reindex(date_range, fill_value=0).reset_index()
-                            daily_rev.columns = ['Purchase Date', 'Total Purchase Amount']
-                            
-                            revenue_trend = [{'name': '-'.join(str(row['Purchase Date'].date()).split('-')[1:]), 'value': int(row['Total Purchase Amount'])} for _, row in daily_rev.iterrows()]
-                        
+                            latest_date = df['Purchase Date'].max()
+                            if pd.notna(latest_date):
+                                # Ensure exact calendar days
+                                date_range = pd.date_range(end=latest_date.date(), periods=rev_days, freq='D')
+                                
+                                daily_rev = df.groupby(df['Purchase Date'].dt.date)['Total Purchase Amount'].sum()
+                                daily_rev.index = pd.to_datetime(daily_rev.index)
+                                
+                                # Reindex to fill missing days with 0
+                                daily_rev = daily_rev.reindex(date_range, fill_value=0).reset_index()
+                                daily_rev.columns = ['Purchase Date', 'Total Purchase Amount']
+                                
+                                revenue_trend = [{'name': '-'.join(str(row['Purchase Date'].date()).split('-')[1:]), 'value': int(row['Total Purchase Amount'])} for _, row in daily_rev.iterrows()]
+                except Exception as e:
+                    print(f"Warning: Could not compute raw sales metrics: {e}")
 
                 # 2. True At-Risk Customers from Predictions
-                if latest_churn and latest_churn.get('file_path'):
-                    with open(latest_churn['file_path'], 'r') as f:
-                        preds = json.load(f)
-                    preds_df = pd.DataFrame(preds)
-                    
-                    # Ensure customer-level aggregation
-                    cust_col = 'customer_name' if 'customer_name' in preds_df.columns else ('customer id' if 'customer id' in preds_df.columns else None)
-                    if cust_col and 'churn_prediction' in preds_df.columns:
-                        total_customers = int(preds_df[cust_col].nunique())
-                        # If a customer has ANY row with prediction 1, they are at risk
-                        at_risk = int(preds_df.groupby(cust_col)['churn_prediction'].max().sum())
-                        
+                try:
+                    if latest_churn and latest_churn.get('file_path'):
+                        file_path = latest_churn['file_path']
+                        if os.path.exists(file_path):
+                            with open(file_path, 'r') as f:
+                                preds = json.load(f)
+                            preds_df = pd.DataFrame(preds)
+                            
+                            # Ensure customer-level aggregation
+                            cust_col = 'customer_name' if 'customer_name' in preds_df.columns else ('customer id' if 'customer id' in preds_df.columns else None)
+                            if cust_col and 'churn_prediction' in preds_df.columns:
+                                total_customers = int(preds_df[cust_col].nunique())
+                                # If a customer has ANY row with prediction 1, they are at risk
+                                at_risk = int(preds_df.groupby(cust_col)['churn_prediction'].max().sum())
+                        else:
+                            print(f"Warning: Churn prediction file not found on disk: {file_path}")
+                except Exception as e:
+                    print(f"Warning: Could not compute churn dashboard metrics: {e}")
+
                 # 3. True Low Stock Alerts from Full Forecasts
-                inventory_path = raw_data_dir / 'retail_store_inventory.csv'
-                if inventory_path.exists():
-                    inv_df = pd.read_csv(inventory_path)
-                    
-                    # Dynamic column detection as in InventoryForecaster
-                    from utils.data_preprocessing import ColumnMatcher
-                    inv_df.columns = [c.strip() for c in inv_df.columns]
-                    qty_col = ColumnMatcher.match(inv_df, 'qty') or 'Inventory Level'
-                    forecast_col = ColumnMatcher.match(inv_df, 'forecast') or 'Demand Forecast'
-                    
-                    if qty_col in inv_df.columns and forecast_col in inv_df.columns:
-                        # Group by Product, Store, Region for the latest date
-                        date_col = ColumnMatcher.match(inv_df, 'date') or 'Date'
-                        if date_col in inv_df.columns:
-                            inv_df[date_col] = pd.to_datetime(inv_df[date_col], errors='coerce')
-                            latest_date = inv_df[date_col].max()
-                            df_latest = inv_df[inv_df[date_col] == latest_date].copy()
-                        else:
-                            df_latest = inv_df.copy()
-                            
-                        prod_col = ColumnMatcher.match(df_latest, 'product') or 'Product ID'
-                        store_col = next((c for c in df_latest.columns if 'store' in c.lower()), 'Store ID')
-                        region_col = next((c for c in df_latest.columns if 'region' in c.lower()), 'Region')
+                try:
+                    inventory_path = raw_data_dir / 'retail_store_inventory.csv'
+                    if inventory_path.exists():
+                        inv_df = pd.read_csv(inventory_path)
                         
-                        groupby_cols = []
-                        if prod_col in df_latest.columns: groupby_cols.append(prod_col)
-                        if store_col in df_latest.columns: groupby_cols.append(store_col)
-                        if region_col in df_latest.columns: groupby_cols.append(region_col)
+                        # Dynamic column detection as in InventoryForecaster
+                        from utils.data_preprocessing import ColumnMatcher
+                        inv_df.columns = [c.strip() for c in inv_df.columns]
+                        qty_col = ColumnMatcher.match(inv_df, 'qty') or 'Inventory Level'
+                        forecast_col = ColumnMatcher.match(inv_df, 'forecast') or 'Demand Forecast'
                         
-                        if groupby_cols:
-                            grouped = df_latest.groupby(groupby_cols).agg({
-                                qty_col: 'min', 
-                                forecast_col: 'mean'
-                            }).reset_index()
+                        if qty_col in inv_df.columns and forecast_col in inv_df.columns:
+                            # Group by Product, Store, Region for the latest date
+                            date_col = ColumnMatcher.match(inv_df, 'date') or 'Date'
+                            if date_col in inv_df.columns:
+                                inv_df[date_col] = pd.to_datetime(inv_df[date_col], errors='coerce')
+                                latest_date = inv_df[date_col].max()
+                                df_latest = inv_df[inv_df[date_col] == latest_date].copy()
+                            else:
+                                df_latest = inv_df.copy()
+                                
+                            prod_col = ColumnMatcher.match(df_latest, 'product') or 'Product ID'
+                            store_col = next((c for c in df_latest.columns if 'store' in c.lower()), 'Store ID')
+                            region_col = next((c for c in df_latest.columns if 'region' in c.lower()), 'Region')
                             
-                            # Low stock alert logic: Inventory < Forecast * 1.2
-                            grouped['is_low'] = grouped[qty_col] < (grouped[forecast_col] * 1.2)
-                            low_stock = int(grouped['is_low'].sum())
-                            low_alerts = grouped[grouped['is_low']].copy()
+                            groupby_cols = []
+                            if prod_col in df_latest.columns: groupby_cols.append(prod_col)
+                            if store_col in df_latest.columns: groupby_cols.append(store_col)
+                            if region_col in df_latest.columns: groupby_cols.append(region_col)
+                            
+                            if groupby_cols:
+                                grouped = df_latest.groupby(groupby_cols).agg({
+                                    qty_col: 'min', 
+                                    forecast_col: 'mean'
+                                }).reset_index()
+                                
+                                # Low stock alert logic: Inventory < Forecast * 1.2
+                                grouped['is_low'] = grouped[qty_col] < (grouped[forecast_col] * 1.2)
+                                low_stock = int(grouped['is_low'].sum())
+                                low_alerts = grouped[grouped['is_low']].copy()
+                            else:
+                                df_latest['is_low'] = df_latest[qty_col] < (df_latest[forecast_col] * 1.2)
+                                low_stock = int(df_latest['is_low'].sum())
+                                low_alerts = df_latest[df_latest['is_low']].copy()
+                                
+                            if low_stock > 0 and not low_alerts.empty:
+                                critical = high = medium = low = 0
+                                for _, row in low_alerts.iterrows():
+                                    inv_val = float(row[qty_col] or 0)
+                                    dmd_val = float(row[forecast_col] or 0)
+                                    coverage = inv_val / dmd_val if dmd_val > 0 else 0
+                                    if coverage < 0.70: critical += 1
+                                    elif coverage < 0.90: high += 1
+                                    elif coverage < 1.20: medium += 1
+                                    else: low += 1
+                                real_inventory_data = []
+                                if critical > 0: real_inventory_data.append({'name': 'Critical', 'value': critical})
+                                if high > 0: real_inventory_data.append({'name': 'High', 'value': high})
+                                if medium > 0: real_inventory_data.append({'name': 'Medium', 'value': medium})
+                                if low > 0: real_inventory_data.append({'name': 'Low', 'value': low})
+                            elif low_stock == 0:
+                                real_inventory_data = []
                         else:
-                            df_latest['is_low'] = df_latest[qty_col] < (df_latest[forecast_col] * 1.2)
-                            low_stock = int(df_latest['is_low'].sum())
-                            low_alerts = df_latest[df_latest['is_low']].copy()
-                            
-                        if low_stock > 0 and not low_alerts.empty:
-                            critical = high = medium = low = 0
-                            for _, row in low_alerts.iterrows():
-                                inv_val = float(row[qty_col] or 0)
-                                dmd_val = float(row[forecast_col] or 0)
-                                coverage = inv_val / dmd_val if dmd_val > 0 else 0
-                                if coverage < 0.70: critical += 1
-                                elif coverage < 0.90: high += 1
-                                elif coverage < 1.20: medium += 1
-                                else: low += 1
-                            real_inventory_data = []
-                            if critical > 0: real_inventory_data.append({'name': 'Critical', 'value': critical})
-                            if high > 0: real_inventory_data.append({'name': 'High', 'value': high})
-                            if medium > 0: real_inventory_data.append({'name': 'Medium', 'value': medium})
-                            if low > 0: real_inventory_data.append({'name': 'Low', 'value': low})
-                        elif low_stock == 0:
-                            real_inventory_data = []
+                            low_stock = "-"
                     else:
                         low_stock = "-"
-                else:
-                    low_stock = "-"
-            except Exception as e:
-                print(f"Warning: Could not compute real dashboard metrics: {e}")
+                except Exception as e:
+                    print(f"Warning: Could not compute real inventory metrics: {e}")
 
             # --- Compile Module Insights ---
             module_insights = {

@@ -75,7 +75,7 @@ Policy training benchmarked against the standard 20% rule-based safety buffer re
 | :--------------------- | :---------------------------: | :----------------: | :-----------------------: |
 | Stockout Events        | 0 events                      | 0 events           | 0.0% (no change)          |
 | Stockout Units         | 0 units                       | 0 units            | 0.0% (no change)          |
-| Total Policy Cost      | $47,964.40                    | $46,020.40         | -4.05% (cost reduction)   |
+| Total Policy Cost      | $47,964.40                    | $46,013.80         | -4.07% (cost reduction)   |
 
 ---
 
@@ -83,32 +83,43 @@ Policy training benchmarked against the standard 20% rule-based safety buffer re
 * Model Type: Unsupervised Clustering
 * Algorithms: cuKMeans (GPU accelerated via NVIDIA RAPIDS cuML on RTX 3050)
 * Objective: Group the customer base into distinct, meaningful behavioral cohorts for targeted campaigns.
-* Dataset Size: 2,240 customer profiles (marketing_campaign.csv).
+* Dataset Size: 2,229 customer profiles (marketing_campaign.csv).
 
 ### Clustering Quality Metrics
 Evaluated on scaled coordinates: Total_Spend, Total_Purchases, Recency, Income, Response with K=5 segments:
 
-| Metric                  |   Value    | Interpretation                                                             |
-| :---------------------- | :--------: | :------------------------------------------------------------------------- |
-| Silhouette Score        |   0.3714   | Measures cluster separation (range: -1 to 1; >0.35 indicates reasonable)    |
-| Davies-Bouldin Index    |   0.9183   | Average similarity between clusters (lower score is better)                |
-| Inertia (Within WCSS)   |   190.32   | Sum of squared distances of samples to their closest centroid              |
+| Metric                       |   Value    | Interpretation                                                             |
+| :--------------------------- | :--------: | :------------------------------------------------------------------------- |
+| Silhouette Score             |   0.3718   | Measures cluster separation (range: -1 to 1; >0.35 indicates reasonable)    |
+| Davies-Bouldin Index         |   0.8693   | Average similarity between clusters (lower score is better)                |
+| Best Candidate Validation    |   0.7192   | Internal cluster structure validation score                                |
+| Business Usability           |    0.96    | Actionable cohort score for marketing campaigns                            |
+| Calinski-Harabasz Index      | 1711.1024  | Ratio of between-cluster variance to within-cluster variance               |
 
 ---
 
 ## 4. 🧠 GPU-Accelerated NLP Sentiment & Feedback Pipeline
 * Model Type: Deep Learning Sequence Classification
 * Framework: PyTorch Transformers (transformers) loaded via use_safetensors=True on CUDA.
-* Dataset Size: 2,240 customer complaints/feedback records (marketing_campaign.csv).
+* Dataset Size: 2,229 customer complaints/feedback records (marketing_campaign.csv).
 * Execution Backend: NVIDIA GeForce RTX 3050 Laptop GPU (CUDA)
 
 ### Actual Pipeline Performance Comparison
 
-| NLP Model Benchmark         | RoBERTa (English)                                  | XLM-RoBERTa (Multilingual)                        |
-| :-------------------------- | :------------------------------------------------: | :-----------------------------------------------: |
-| Model Name                  | cardiffnlp/twitter-roberta-base-sentiment-latest   | cardiffnlp/twitter-xlm-roberta-base-sentiment     |
-| Overall Sentiment Score     | 80.37% (avg positive prob)                         | 68.20% (avg positive prob)                        |
-| Positive Feedback Ratio     | 85.22%                                             | 85.22%                                            |
-| Neutral Feedback Ratio      | 13.48%                                             | 13.48%                                            |
-| Negative Feedback Ratio     | 1.29%                                              | 1.29%                                             |
-| NLP Execution Time          | 3.71 seconds                                       | 3.18 seconds                                      |
+| NLP Model Benchmark         | RoBERTa + XLM-R Hybrid (English / Multilingual)    |
+| :-------------------------- | :------------------------------------------------: |
+| Overall Sentiment Score     | 86.60% (avg positive probability)                  |
+| Positive Feedback Ratio     | 85.30%                                             |
+| Neutral Feedback Ratio      | 13.50%                                             |
+| Negative Feedback Ratio     | 1.30%                                              |
+| Mixed Signal Flags          | 268 flags                                          |
+| NLP Processing Time         | 131.97 seconds (131,967.4 ms)                      |
+| Most Discussed Aspect       | Store Experience                                   |
+| Top Positive Aspect         | Store Experience                                   |
+
+### Top Feedback Themes Identified
+* Neutral Experience
+* Repeat Purchase Intent
+* Product Quality Praise
+* Delivery Delay
+* Customer Support

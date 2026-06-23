@@ -418,30 +418,14 @@ def analyze_customers():
     ) if dataset_path else None
 
     # ── Cache lookup ──
-    if force_refresh and cache_key:
-        print({
-            "module": "marketing",
-            "cache": "BYPASS / FORCE_REFRESH",
-            "cache_key": cache_key,
-            "cluster_mode": cluster_mode,
-        })
+
 
     if cache_key and not force_refresh:
         cached = cache_get(cache_key)
         if cached is not None:
             t_hit = time.perf_counter()
             k_selection = cached.get("k_selection") or {}
-            print({
-                "module": "marketing",
-                "cache": "HIT",
-                "cache_key": cache_key,
-                "cluster_mode": cached.get("cluster_mode", cluster_mode),
-                "selected_k": cached.get("selected_k", cached.get("n_clusters")),
-                "silhouette_score": cached.get("silhouette_score"),
-                "quality_label": k_selection.get("quality_label"),
-                "reason": k_selection.get("reason"),
-                "total_ms": round((t_hit - t_request) * 1000, 1),
-            })
+
             _print_auto_k_console_summary(cached, cache_status="HIT", print_candidates=bool(k_selection.get("candidate_scores")))
             _print_kmeans_console_summary(cached, cache_status="HIT")
             print_nlp_console_summary(cached.get("nlp_insights"), dataset_id=cached.get("dataset_id", dataset_id), cache_status="HIT")
@@ -579,17 +563,7 @@ def analyze_customers():
     t_end = time.perf_counter()
 
     # ── Timing report (Phase 2) ──
-    print({
-        "module": "marketing",
-        "cache": "MISS",
-        "cluster_mode": cluster_mode,
-        "selected_k": n_clusters,
-        "dataset_load_ms": round((t_load - t0) * 1000, 1),
-        "kmeans_pipeline_ms": round((t_kmeans - t_load) * 1000, 1),
-        "nlp_pipeline_ms": round((t_nlp - t_kmeans) * 1000, 1),
-        "response_build_ms": round((t_response_built - t_nlp) * 1000, 1),
-        "total_ms": round((t_end - t0) * 1000, 1),
-    })
+
     if cluster_mode == "auto":
         _print_auto_k_console_summary(
             result,
