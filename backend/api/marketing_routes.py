@@ -426,6 +426,19 @@ def analyze_customers():
             t_hit = time.perf_counter()
             k_selection = cached.get("k_selection") or {}
 
+            # Update predictions generated_date to now and insert into analysis_runs
+            try:
+                from datetime import datetime
+                latest_pred = db.predictions.find_one(
+                    {"dataset_id": dataset_id, "prediction_type": "marketing", "user_email": user_email},
+                    sort=[("generated_date", -1)]
+                )
+                if latest_pred:
+                    db.predictions.update_one({"_id": latest_pred["_id"]}, {"$set": {"generated_date": datetime.now()}})
+                    db._save_report(dataset_id, 'marketing', user_email=user_email, marketing_analysis_id=str(latest_pred["_id"]))
+            except Exception as e:
+                print(f"Warning: Could not update marketing run metadata on cache hit: {e}")
+
             _print_auto_k_console_summary(cached, cache_status="HIT", print_candidates=bool(k_selection.get("candidate_scores")))
             _print_kmeans_console_summary(cached, cache_status="HIT")
             print_nlp_console_summary(cached.get("nlp_insights"), dataset_id=cached.get("dataset_id", dataset_id), cache_status="HIT")

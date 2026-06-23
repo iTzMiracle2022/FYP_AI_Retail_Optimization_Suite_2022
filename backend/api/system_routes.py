@@ -78,9 +78,10 @@ def get_dashboard_summary():
     requester_role = request.headers.get('X-User-Role')
     
     rev_days = request.args.get('rev_days')
+    rev_freq = request.args.get('rev_freq', 'daily')
     act_days = request.args.get('act_days')
     
     if requester_role in ['Manager', 'System Admin']:
         user_email = None
         
-    return jsonify(db.get_dashboard_summary(user_email, rev_days=rev_days, act_days=act_days)), 200
+    return jsonify(db.get_dashboard_summary(user_email, rev_days=rev_days, act_days=act_days, rev_freq=rev_freq)), 200

@@ -36,11 +36,11 @@ const AnalyticsPage = () => {
       isReady: !!salesState.results,
       onDownload: () => triggerExport('sales', 'pdf', {
         dataset_id: salesState.selectedDs,
-        data: salesState.results.top_products,
+        data: salesState.results.charts?.revenue_trend || [],
         summary: {
-          total_revenue: `$${salesState.results.total_revenue?.toLocaleString()}`,
-          total_transactions: salesState.results.total_transactions,
-          top_product: salesState.results.top_products?.[0]?.product || 'N/A'
+          total_revenue: `$${salesState.results.kpis?.total_revenue?.toLocaleString()}`,
+          total_transactions: salesState.results.kpis?.total_transactions,
+          top_category: salesState.results.kpis?.top_category || 'N/A'
         }
       }, 'sales-pdf')
     },

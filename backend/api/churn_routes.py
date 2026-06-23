@@ -996,7 +996,11 @@ def predict_churn():
                 file_path = latest_prediction.get("file_path")
                 if file_path and os.path.exists(file_path) and os.path.getsize(file_path) > 10:
                     prediction_id = str(latest_prediction["_id"])
-                    print(f"✅ Reused cached churn prediction record: {prediction_id}")
+                    # Update predictions generated_date to now
+                    db.predictions.update_one({"_id": latest_prediction["_id"]}, {"$set": {"generated_date": datetime.now()}})
+                    # Track report entry and insert into analysis_runs
+                    db._save_report(dataset_id, 'churn', user_email=user_email, churn_prediction_id=prediction_id)
+                    print(f"✅ Reused and updated cached churn prediction record: {prediction_id}")
                 else:
                     print(f"⚠️ Churn prediction file missing or empty on disk: {file_path}. Invalidating cache and re-running.")
         except Exception as exc:

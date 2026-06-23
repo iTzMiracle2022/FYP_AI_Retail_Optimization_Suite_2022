@@ -653,10 +653,10 @@ class MongoDBHelper:
         logs = list(self.sync_logs.find({}, {'_id': 0}).sort('timestamp', -1).limit(limit))
         return _serialize(logs)
 
-    def get_dashboard_summary(self, user_email=None, rev_days=None, act_days=None):
+    def get_dashboard_summary(self, user_email=None, rev_days=None, act_days=None, rev_freq='daily'):
         """Aggregate real-time metrics for the dynamic dashboard."""
-        rev_days = int(rev_days) if rev_days and str(rev_days).isdigit() else 30
         act_days = int(act_days) if act_days and str(act_days).isdigit() else 30
+        rev_freq = str(rev_freq).lower() if rev_freq else 'daily'
             
         try:
             base_query = {'user_email': user_email} if user_email else {}
@@ -709,6 +709,7 @@ class MongoDBHelper:
             # --- OVERRIDE WITH REAL DATASET METRICS ---
             revenue_trend = []
             real_inventory_data = None
+            real_churn_data = None
             
             # Helper imports
             try:
@@ -738,17 +739,34 @@ class MongoDBHelper:
                             
                             latest_date = df['Purchase Date'].max()
                             if pd.notna(latest_date):
+                                if str(rev_days).lower() == 'all':
+                                    min_date = df['Purchase Date'].min()
+                                    rev_days_int = (latest_date.date() - min_date.date()).days + 1 if pd.notna(min_date) else 30
+                                else:
+                                    rev_days_int = int(rev_days) if rev_days and str(rev_days).isdigit() else 30
+                                    
                                 # Ensure exact calendar days
-                                date_range = pd.date_range(end=latest_date.date(), periods=rev_days, freq='D')
+                                date_range = pd.date_range(end=latest_date.date(), periods=rev_days_int, freq='D')
                                 
                                 daily_rev = df.groupby(df['Purchase Date'].dt.date)['Total Purchase Amount'].sum()
                                 daily_rev.index = pd.to_datetime(daily_rev.index)
                                 
                                 # Reindex to fill missing days with 0
-                                daily_rev = daily_rev.reindex(date_range, fill_value=0).reset_index()
-                                daily_rev.columns = ['Purchase Date', 'Total Purchase Amount']
+                                daily_rev = daily_rev.reindex(date_range, fill_value=0)
                                 
-                                revenue_trend = [{'name': '-'.join(str(row['Purchase Date'].date()).split('-')[1:]), 'value': int(row['Total Purchase Amount'])} for _, row in daily_rev.iterrows()]
+                                if rev_freq == 'weekly':
+                                    resampled = daily_rev.resample('W-MON').sum().reset_index()
+                                    resampled.columns = ['Purchase Date', 'Total Purchase Amount']
+                                    revenue_trend = [{'name': str(row['Purchase Date'].date()), 'value': int(row['Total Purchase Amount'])} for _, row in resampled.iterrows()]
+                                elif rev_freq == 'monthly':
+                                    resampled = daily_rev.resample('MS').sum().reset_index()
+                                    resampled.columns = ['Purchase Date', 'Total Purchase Amount']
+                                    revenue_trend = [{'name': row['Purchase Date'].strftime('%b %Y'), 'value': int(row['Total Purchase Amount'])} for _, row in resampled.iterrows()]
+                                else:
+                                    # daily
+                                    resampled = daily_rev.reset_index()
+                                    resampled.columns = ['Purchase Date', 'Total Purchase Amount']
+                                    revenue_trend = [{'name': '-'.join(str(row['Purchase Date'].date()).split('-')[1:]), 'value': int(row['Total Purchase Amount'])} for _, row in resampled.iterrows()]
                 except Exception as e:
                     print(f"Warning: Could not compute raw sales metrics: {e}")
 
@@ -763,10 +781,27 @@ class MongoDBHelper:
                             
                             # Ensure customer-level aggregation
                             cust_col = 'customer_name' if 'customer_name' in preds_df.columns else ('customer id' if 'customer id' in preds_df.columns else None)
-                            if cust_col and 'churn_prediction' in preds_df.columns:
+                            if cust_col:
                                 total_customers = int(preds_df[cust_col].nunique())
-                                # If a customer has ANY row with prediction 1, they are at risk
-                                at_risk = int(preds_df.groupby(cust_col)['churn_prediction'].max().sum())
+                                
+                                # Churn prediction (At risk is max prediction per customer)
+                                pred_col = 'churn_prediction' if 'churn_prediction' in preds_df.columns else ('model_predicted_churn' if 'model_predicted_churn' in preds_df.columns else None)
+                                if pred_col:
+                                    at_risk = int(preds_df.groupby(cust_col)[pred_col].max().sum())
+                                
+                                # Risk zone counts based on churn_probability
+                                prob_col = 'churn_probability' if 'churn_probability' in preds_df.columns else ('model_churn_probability' if 'model_churn_probability' in preds_df.columns else None)
+                                if prob_col:
+                                    cust_probs = preds_df.groupby(cust_col)[prob_col].max() * 100
+                                    low_risk_count = int((cust_probs <= 50.0).sum())
+                                    watchlist_count = int(((cust_probs > 50.0) & (cust_probs < 83.0)).sum())
+                                    high_risk_count = int((cust_probs >= 83.0).sum())
+                                    
+                                    real_churn_data = [
+                                        {'name': 'Low Risk', 'value': low_risk_count},
+                                        {'name': 'Watchlist', 'value': watchlist_count},
+                                        {'name': 'High Risk', 'value': high_risk_count}
+                                    ]
                         else:
                             print(f"Warning: Churn prediction file not found on disk: {file_path}")
                 except Exception as e:
@@ -859,7 +894,7 @@ class MongoDBHelper:
                 'inventory': {
                     'title': 'Inventory Insights',
                     'subtitle': 'Low-stock pressure',
-                    'chart_type': 'bar',
+                    'chart_type': 'stacked_bar',
                     'data': []
                 },
                 'marketing': {
@@ -881,13 +916,16 @@ class MongoDBHelper:
                 module_insights['sales']['data'] = sorted(sales_data, key=lambda x: x['value'], reverse=True)[:5]
                 
             # 2. Churn Snapshot
-            if latest_churn and isinstance(total_customers, int) and isinstance(at_risk, int):
-                safe = total_customers - at_risk
-                if total_customers > 0:
-                    module_insights['churn']['data'] = [
-                        {'name': 'Safe Customers', 'value': safe},
-                        {'name': 'At Risk', 'value': at_risk}
-                    ]
+            if latest_churn:
+                if real_churn_data is not None:
+                    module_insights['churn']['data'] = real_churn_data
+                elif isinstance(total_customers, int) and isinstance(at_risk, int):
+                    safe = total_customers - at_risk
+                    if total_customers > 0:
+                        module_insights['churn']['data'] = [
+                            {'name': 'Safe Customers', 'value': safe},
+                            {'name': 'At Risk', 'value': at_risk}
+                        ]
                     
             # 3. Inventory Snapshot
             if latest_inv:

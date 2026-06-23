@@ -2,12 +2,12 @@ import React, { useState, useEffect, useRef } from 'react';
 import { 
   Users, Box, Database,
   ArrowUpRight, ArrowRight, DollarSign, AlertTriangle,
-  FileText, Activity
+  FileText, Activity, Calendar, BarChart2
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { 
-  AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip, 
-  ResponsiveContainer, CartesianGrid, PieChart, Pie, Cell, Legend
+  AreaChart, Area, LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip, 
+  ResponsiveContainer, CartesianGrid, PieChart, Pie, Cell, Legend, Brush
 } from 'recharts';
 import { useAuth } from "../context/AuthContext";
 import API from "../api/index";
@@ -107,18 +107,26 @@ const CustomLegend = ({ payload }) => {
 
 const CustomSnapshotTooltip = ({ active, payload, title }) => {
   if (active && payload && payload.length) {
-    const data = payload[0].payload;
-    const color = payload[0].color || payload[0].payload?.fill;
-    let formattedVal = data.value != null ? new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 }).format(data.value) : '0';
-    if (title && title.includes('Sales') && data.value != null) {
-      formattedVal = '$' + formattedVal;
-    }
+    const entry = payload[0];
+    const data = entry.payload;
+    const color = entry.color || data?.fill || '#3B82F6';
+    const isSales = title && title.includes('Sales');
+    const formattedVal = isSales && data.value != null
+      ? `$${data.value.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`
+      : data.value.toLocaleString();
+      
     return (
-      <div style={{ background: '#fff', padding: '8px 12px', border: '1px solid #E2E8F0', borderRadius: '8px', boxShadow: '0 4px 12px rgba(0,0,0,0.05)', fontSize: '12px', display: 'flex', alignItems: 'center' }}>
-        <span style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: color || '#ccc', marginRight: 8 }}></span>
-        <span style={{ fontWeight: 600, color: '#334155' }}>{data.fullName || data.name}</span>
-        <span style={{ margin: '0 4px', color: '#94A3B8' }}>:</span>
-        <span style={{ color: '#0F172A', fontWeight: 700 }}>{formattedVal}</span>
+      <div style={{ background: '#ffffff', border: '1px solid #E2E8F0', padding: '12px 16px 8px 16px', borderRadius: '8px', boxShadow: '0 10px 25px -5px rgba(0,0,0,0.1), 0 8px 10px -6px rgba(0,0,0,0.1)', fontFamily: "'Inter', sans-serif", minWidth: '180px' }}>
+        <p style={{ margin: '0 0 6px 0', fontSize: '0.85rem', fontWeight: 700, color: '#0F172A', borderBottom: '1px solid #F1F5F9', paddingBottom: '6px' }}>
+          {title}
+        </p>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <span style={{ display: 'inline-block', width: '8px', height: '8px', borderRadius: '50%', background: color }}></span>
+            <span style={{ fontSize: '0.8rem', color: '#64748B', fontWeight: 500 }}>{data.fullName || data.name}</span>
+          </div>
+          <span style={{ fontSize: '0.85rem', fontWeight: 800, color: '#0F172A' }}>{formattedVal}</span>
+        </div>
       </div>
     );
   }
@@ -130,7 +138,9 @@ function getShortLabel(title, name) {
   let shortName = name;
   if (title.includes("Churn") || title.includes("Retention")) {
     if (name.includes("Safe")) shortName = "Safe";
-    if (name.includes("At Risk") || name.includes("At-Risk")) shortName = "At Risk";
+    if (name.includes("Low")) shortName = "Low Risk";
+    if (name.includes("Watch")) shortName = "Watchlist";
+    if (name.includes("High") || name.includes("At Risk") || name.includes("At-Risk")) shortName = "High Risk";
   }
   if (title.includes("Marketing") || title.includes("Audience")) {
     if (name.includes("At Risk") || name.includes("At-Risk")) shortName = "Needs Attention";
@@ -151,8 +161,9 @@ function getSnapshotColor(title, name) {
   const normalized = String(name || "").toLowerCase();
   
   if (title.includes("Churn") || title.includes("Retention")) {
-    if (normalized.includes("safe")) return "#10B981";
-    if (normalized.includes("risk")) return "#EF4444";
+    if (normalized.includes("safe") || normalized.includes("low")) return "#10B981";
+    if (normalized.includes("watchlist") || normalized.includes("watch")) return "#F59E0B";
+    if (normalized.includes("risk") || normalized.includes("high")) return "#EF4444";
   }
   
   if (title.includes("Inventory")) {
@@ -163,10 +174,10 @@ function getSnapshotColor(title, name) {
   }
   
   if (title.includes("Marketing") || title.includes("Audience")) {
-    if (normalized.includes("champion")) return "#10B981";
-    if (normalized.includes("loyal")) return "#3B82F6";
-    if (normalized.includes("lost")) return "#EF4444";
-    if (normalized.includes("attention") || normalized.includes("engagement") || normalized.includes("risk")) return "#F59E0B";
+    if (normalized.includes("champion")) return "#16A34A";
+    if (normalized.includes("loyal")) return "#2563EB";
+    if (normalized.includes("lost")) return "#DC2626";
+    if (normalized.includes("attention") || normalized.includes("engagement") || normalized.includes("risk")) return "#D97706";
     return "#94A3B8";
   }
 
@@ -208,6 +219,8 @@ class SnapshotErrorBoundary extends React.Component {
 }
 
 const MiniSnapshotCard = ({ insight, emptyMsg, lastRun = null }) => {
+  const [hoveredIndex, setHoveredIndex] = useState(null);
+  
   if (!insight) return null;
   const { title, subtitle, chart_type, data: rawData } = insight;
   
@@ -231,14 +244,90 @@ const MiniSnapshotCard = ({ insight, emptyMsg, lastRun = null }) => {
   }
 
   return (
-    <div className="premium-card" style={{ display: 'flex', flexDirection: 'column', padding: '1.25rem', height: '100%' }}>
+    <div className="premium-card" style={{ display: 'flex', flexDirection: 'column', padding: '1.25rem', height: '100%', position: 'relative' }}>
       <div style={{ marginBottom: '1rem' }}>
         <h3 style={{ fontSize: '0.95rem', fontWeight: 800, color: 'var(--text-main)', marginBottom: '2px', fontFamily: "'Manrope', sans-serif" }}>{title}</h3>
         <p style={{ fontSize: '0.75rem', color: '#64748B', margin: 0 }}>{subtitle}</p>
       </div>
-      <div style={{ flex: 1, minHeight: '140px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div style={{ flex: 1, minHeight: '140px', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
         {isEmpty ? (
           <p style={{ fontSize: '0.8rem', color: '#94A3B8', fontWeight: 600, textAlign: 'center' }}>{displayEmptyMsg}</p>
+        ) : chart_type === 'stacked_bar' ? (
+          (() => {
+            const totalVal = safeData.reduce((sum, item) => sum + item.value, 0);
+            return (
+              <div style={{ display: 'flex', flexDirection: 'column', width: '100%', gap: '1.25rem', padding: '0 0.5rem', position: 'relative' }}>
+                {/* Custom Tooltip absolute wrapper */}
+                {hoveredIndex !== null && safeData[hoveredIndex] && (
+                  <div 
+                    style={{
+                      position: 'absolute',
+                      bottom: '50px',
+                      left: '50%',
+                      transform: 'translateX(-50%)',
+                      background: '#ffffff',
+                      border: '1px solid #E2E8F0',
+                      padding: '12px 16px 8px 16px',
+                      borderRadius: '8px',
+                      boxShadow: '0 10px 25px -5px rgba(0,0,0,0.1), 0 8px 10px -6px rgba(0,0,0,0.1)',
+                      zIndex: 100,
+                      pointerEvents: 'none',
+                      fontFamily: "'Inter', sans-serif",
+                      minWidth: '180px'
+                    }}
+                  >
+                    <p style={{ margin: '0 0 6px 0', fontSize: '0.85rem', fontWeight: 700, color: '#0F172A', borderBottom: '1px solid #F1F5F9', paddingBottom: '6px' }}>
+                      {title}
+                    </p>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <span style={{ display: 'inline-block', width: '8px', height: '8px', borderRadius: '50%', background: getSnapshotColor(title, safeData[hoveredIndex].name) }}></span>
+                        <span style={{ fontSize: '0.8rem', color: '#64748B', fontWeight: 500 }}>{safeData[hoveredIndex].fullName || safeData[hoveredIndex].name}</span>
+                      </div>
+                      <span style={{ fontSize: '0.85rem', fontWeight: 800, color: '#0F172A' }}>
+                        {safeData[hoveredIndex].value} ({((safeData[hoveredIndex].value / totalVal) * 100).toFixed(0)}%)
+                      </span>
+                    </div>
+                  </div>
+                )}
+                {/* Segmented Horizontal Bar */}
+                <div style={{ height: '14px', borderRadius: '7px', display: 'flex', overflow: 'hidden', background: '#F1F5F9', boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.05)' }}>
+                  {safeData.map((item, index) => {
+                    const pct = totalVal > 0 ? (item.value / totalVal) * 100 : 0;
+                    if (pct === 0) return null;
+                    return (
+                      <div 
+                        key={index} 
+                        style={{ 
+                          width: `${pct}%`, 
+                          background: getSnapshotColor(title, item.name),
+                          transition: 'width 0.4s ease-in-out',
+                          cursor: 'pointer'
+                        }} 
+                        onMouseEnter={() => setHoveredIndex(index)}
+                        onMouseLeave={() => setHoveredIndex(null)}
+                      />
+                    );
+                  })}
+                </div>
+                {/* Divided Grid Legend */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px 16px' }}>
+                  {safeData.map((item, index) => {
+                    const pct = totalVal > 0 ? (item.value / totalVal) * 100 : 0;
+                    return (
+                      <div key={index} style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.75rem' }}>
+                        <span style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: getSnapshotColor(title, item.name), flexShrink: 0 }}></span>
+                        <span style={{ color: '#64748B', fontWeight: 600 }}>{item.name}</span>
+                        <span style={{ color: 'var(--text-main)', fontWeight: 800, marginLeft: 'auto' }}>
+                          {item.value} <span style={{ fontSize: '0.65rem', color: '#94A3B8', fontWeight: 500, marginLeft: '2px' }}>({pct.toFixed(0)}%)</span>
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })()
         ) : (
           <ResponsiveContainer width="100%" height="100%">
             {chart_type === 'bar' ? (
@@ -271,16 +360,53 @@ const MiniSnapshotCard = ({ insight, emptyMsg, lastRun = null }) => {
   );
 };
 
-const CustomTooltip = ({ active, payload, label }) => {
+const CustomTooltip = ({ active, payload, label, dataArray }) => {
   if (active && payload && payload.length) {
-    const isActivity = ['Sales', 'Churn', 'Inventory', 'Marketing'].includes(payload[0].payload.name);
+    const entry = payload[0];
+    const data = entry.payload;
+    const isActivity = ['Sales', 'Churn', 'Inventory', 'Marketing'].includes(data.name);
+    
+    const formattedValue = isActivity 
+      ? `${entry.value.toLocaleString()} runs`
+      : `$${entry.value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+      
+    const titleLabel = isActivity ? 'Module Activity' : `Date: ${label || data.name}`;
+    const itemName = isActivity ? data.name : 'Revenue';
+    const color = isActivity ? entry.color || '#3B82F6' : '#3B82F6';
+    
+    let prevVal = null;
+    let delta = null;
+    let deltaPct = null;
+    if (dataArray && !isActivity) {
+      const idx = dataArray.findIndex(item => item.name === data.name);
+      if (idx > 0) {
+        const prevItem = dataArray[idx - 1];
+        prevVal = prevItem.value;
+        delta = data.value - prevVal;
+        deltaPct = prevVal > 0 ? (delta / prevVal) * 100 : 0;
+      }
+    }
+    
     return (
-      <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: '8px', padding: '8px 12px', boxShadow: '0 4px 12px rgba(0,0,0,0.05)' }}>
-        <p style={{ color: 'var(--text-main)', fontWeight: 700, fontSize: '0.85rem', margin: 0 }}>
-          {isActivity 
-            ? `${payload[0].payload.name}: ${payload[0].value} runs`
-            : `${payload[0].payload.name}: $${payload[0].value.toLocaleString()}`}
+      <div style={{ background: '#ffffff', border: '1px solid #E2E8F0', padding: '12px 16px 8px 16px', borderRadius: '8px', boxShadow: '0 10px 25px -5px rgba(0,0,0,0.1), 0 8px 10px -6px rgba(0,0,0,0.1)', fontFamily: "'Inter', sans-serif", minWidth: '220px' }}>
+        <p style={{ margin: '0 0 6px 0', fontSize: '0.85rem', fontWeight: 700, color: '#0F172A', borderBottom: '1px solid #F1F5F9', paddingBottom: '6px' }}>
+          {titleLabel}
         </p>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', marginBottom: delta !== null ? '4px' : '0' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <span style={{ display: 'inline-block', width: '8px', height: '8px', borderRadius: '50%', background: color }}></span>
+            <span style={{ fontSize: '0.8rem', color: '#64748B', fontWeight: 500 }}>{itemName}</span>
+          </div>
+          <span style={{ fontSize: '0.85rem', fontWeight: 800, color: '#0F172A' }}>{formattedValue}</span>
+        </div>
+        
+        {delta !== null && (
+          <div style={{ display: 'flex', justifyContent: 'flex-end', margin: '2px 0 0 0' }}>
+            <span style={{ fontSize: '0.75rem', color: delta > 0 ? '#10B981' : delta < 0 ? '#EF4444' : '#64748B', fontWeight: 500 }}>
+              {delta > 0 ? '↑' : delta < 0 ? '↓' : ''} Change: {delta > 0 ? '+' : ''}${delta.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ({deltaPct > 0 ? '+' : ''}{deltaPct.toFixed(1)}%)
+            </span>
+          </div>
+        )}
       </div>
     );
   }
@@ -334,6 +460,18 @@ const DashboardSkeleton = () => (
 
 import { useApp } from '../context/AppContext';
 
+const getAllowedAggregations = (rangeStr) => {
+  if (rangeStr === 'all') return ['weekly', 'monthly'];
+  if (rangeStr === '90d') return ['daily', 'weekly'];
+  return ['daily'];
+};
+
+const getDefaultAggregation = (rangeStr) => {
+  if (rangeStr === 'all') return 'monthly';
+  if (rangeStr === '90d') return 'weekly';
+  return 'daily';
+};
+
 /* ═══════════════════════════════════════════
    DASHBOARD
    ═══════════════════════════════════════════ */
@@ -342,14 +480,27 @@ const Dashboard = () => {
   const { dashboardState, setDashboardState } = useApp();
   
   const stats = dashboardState.stats;
-  const revenueTimeframe = dashboardState.revenueTimeframe;
+  
+  // Normalize timeframe values if they are '7', '14', '30' from context default
+  const rawRevenueTimeframe = dashboardState.revenueTimeframe || '14d';
+  const revenueTimeframe = rawRevenueTimeframe.endsWith('d') || rawRevenueTimeframe === 'all' 
+    ? rawRevenueTimeframe 
+    : `${rawRevenueTimeframe}d`;
+    
   const activityTimeframe = dashboardState.activityTimeframe;
   
   const setRevenueTimeframe = (val) => setDashboardState(prev => ({ ...prev, revenueTimeframe: val }));
   const setActivityTimeframe = (val) => setDashboardState(prev => ({ ...prev, activityTimeframe: val }));
 
+  const [revenueAggregation, setRevenueAggregation] = useState(() => getDefaultAggregation(revenueTimeframe));
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isInitialLoading, setIsInitialLoading] = useState(true);
+
+  const handleRevenueRangeChange = (e) => {
+    const val = e.target.value;
+    setRevenueTimeframe(val);
+    setRevenueAggregation(getDefaultAggregation(val));
+  };
 
   const fetchStats = async () => {
     if (!user?.email) return;
@@ -360,7 +511,8 @@ const Dashboard = () => {
     else setIsRefreshing(true);
     
     try {
-      const res = await API.get(`/dashboard/summary?email=${user.email}&rev_days=${revenueTimeframe}&act_days=${activityTimeframe}`);
+      const cleanRevDays = revenueTimeframe.replace('d', '');
+      const res = await API.get(`/dashboard/summary?email=${user.email}&rev_days=${cleanRevDays}&act_days=${activityTimeframe}&rev_freq=${revenueAggregation}`);
       if (res.success) setDashboardState(prev => ({ ...prev, stats: res }));
     } catch (err) {
       console.error("Dashboard API Error:", err);
@@ -378,7 +530,7 @@ const Dashboard = () => {
     window.addEventListener('focus', handleFocus);
     
     return () => window.removeEventListener('focus', handleFocus);
-  }, [user?.email, revenueTimeframe, activityTimeframe]);
+  }, [user?.email, revenueTimeframe, activityTimeframe, revenueAggregation]);
   
   if (isInitialLoading && !stats) {
     return <DashboardSkeleton />;
@@ -453,37 +605,47 @@ const Dashboard = () => {
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
             <div>
               <h3 style={{ fontSize: '1.05rem', fontWeight: 800, color: 'var(--text-main)', marginBottom: '2px', fontFamily: "'Manrope', sans-serif" }}>Revenue Trend</h3>
-              <p style={{ fontSize: '0.8rem', color: '#64748B', margin: 0 }}>Performance over time</p>
+              <p style={{ fontSize: '0.8rem', color: '#64748B', margin: 0, fontWeight: 500 }}>{revenueAggregation.charAt(0).toUpperCase() + revenueAggregation.slice(1)} revenue · {revenueTimeframe === 'all' ? 'All time' : `Last ${revenueTimeframe.replace('d', '')} days`}</p>
             </div>
-            <select 
-              value={revenueTimeframe} 
-              onChange={(e) => setRevenueTimeframe(e.target.value)}
-              style={{
-                background: 'var(--bg-main)', border: '1px solid var(--border)', borderRadius: '8px', 
-                padding: '0.4rem 0.8rem', fontSize: '0.8rem', color: 'var(--text-main)', 
-                fontWeight: 600, outline: 'none', cursor: 'pointer'
-              }}
-            >
-              <option value="7">Last 7 days</option>
-              <option value="14">Last 14 days</option>
-              <option value="30">Last 30 days</option>
-            </select>
+            <div style={{ display: 'flex', gap: '0.5rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '4px', background: '#F8FAFC', padding: '0.35rem 0.5rem', borderRadius: '6px', border: '1px solid #E2E8F0' }}>
+                <Calendar size={12} color="#64748B" />
+                <select 
+                  value={revenueTimeframe} 
+                  onChange={handleRevenueRangeChange} 
+                  style={{ background: 'transparent', border: 'none', outline: 'none', color: '#475569', fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer' }}
+                >
+                  <option value="7d">Last 7 days</option>
+                  <option value="14d">Last 14 days</option>
+                  <option value="30d">Last 30 days</option>
+                  <option value="90d">Last 90 days</option>
+                  <option value="all">All Time</option>
+                </select>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '4px', background: '#F8FAFC', padding: '0.35rem 0.5rem', borderRadius: '6px', border: '1px solid #E2E8F0' }}>
+                <BarChart2 size={12} color="#64748B" />
+                <select 
+                  value={revenueAggregation} 
+                  onChange={(e) => setRevenueAggregation(e.target.value)} 
+                  style={{ background: 'transparent', border: 'none', outline: 'none', color: '#475569', fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer' }}
+                >
+                  {getAllowedAggregations(revenueTimeframe).map(agg => (
+                    <option key={agg} value={agg}>{agg.charAt(0).toUpperCase() + agg.slice(1)}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
           </div>
           <div style={{ flex: 1, minHeight: '260px' }}>
             <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={revenueData} margin={{ top: 10, right: 0, left: -20, bottom: 0 }}>
-                <defs>
-                  <linearGradient id="colorRev" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#3B82F6" stopOpacity={0.1}/>
-                    <stop offset="95%" stopColor="#3B82F6" stopOpacity={0}/>
-                  </linearGradient>
-                </defs>
+              <LineChart data={revenueData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#F1F5F9" />
                 <XAxis dataKey="name" stroke="#94A3B8" fontSize={10} tickLine={false} axisLine={false} />
                 <YAxis stroke="#94A3B8" fontSize={10} tickLine={false} axisLine={false} ticks={revenueTicks} domain={[0, revenueTicks[4]]} tickFormatter={(val) => val >= 1000 ? `${val / 1000}k` : val} />
-                <Tooltip content={<CustomTooltip />} />
-                <Area type="monotone" dataKey="value" stroke="#3B82F6" strokeWidth={2.5} fillOpacity={1} fill="url(#colorRev)" />
-              </AreaChart>
+                <Tooltip content={<CustomTooltip dataArray={revenueData} />} />
+                <Line type="linear" dataKey="value" name="Revenue" stroke="#3B82F6" strokeWidth={3} dot={true} activeDot={{ r: 6, fill: '#3B82F6', stroke: '#fff', strokeWidth: 2 }} />
+                <Brush dataKey="name" height={20} stroke="#3B82F6" tickFormatter={() => ''} style={{ fill: '#F8FAFC' }} />
+              </LineChart>
             </ResponsiveContainer>
           </div>
         </div>
