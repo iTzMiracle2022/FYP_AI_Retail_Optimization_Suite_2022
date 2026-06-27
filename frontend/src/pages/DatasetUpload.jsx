@@ -54,7 +54,8 @@ const DatasetUpload = () => {
         datasetId: res.dataset_id,
         rows: res.rows,
         columns: res.columns,
-        type: res.dataset_type
+        type: res.dataset_type,
+        suitability: res.suitability
       });
       await refreshList();
     } catch (err) {
@@ -172,6 +173,25 @@ const DatasetUpload = () => {
           {success.columns && (
             <div style={{ marginTop: '1rem', fontSize: '0.8rem', color: '#047857', lineHeight: 1.5 }}>
               <strong>Columns:</strong> {success.columns.join(', ')}
+            </div>
+          )}
+          {success.suitability && (
+            <div style={{
+              marginTop: '1.25rem',
+              padding: '1rem',
+              backgroundColor: '#F0FDF4',
+              border: '1px solid #BBF7D0',
+              borderRadius: '8px',
+              color: '#166534',
+              fontSize: '0.9rem',
+              fontWeight: 600,
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.5rem',
+              boxShadow: '0 2px 8px rgba(22, 101, 52, 0.05)'
+            }}>
+              <span style={{ fontSize: '1.1rem' }}>💡</span>
+              <span>{success.suitability}</span>
             </div>
           )}
         </div>

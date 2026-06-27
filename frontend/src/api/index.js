@@ -15,6 +15,7 @@ export const API_URL = getApiBaseUrl();
 // Base Axios instance matching the backend Flask port (5000)
 const API = axios.create({
   baseURL: API_URL,
+  withCredentials: true,
   headers: {
     'Content-Type': 'application/json'
   }
@@ -22,7 +23,7 @@ const API = axios.create({
 
 // Attach user context headers
 API.interceptors.request.use((config) => {
-  const savedUser = localStorage.getItem('retail_ai_user');
+  const savedUser = sessionStorage.getItem('retail_ai_user');
   if (savedUser) {
     try {
       const user = JSON.parse(savedUser);
@@ -37,6 +38,13 @@ API.interceptors.request.use((config) => {
 API.interceptors.response.use(
   (response) => response.data,
   (error) => {
+    // Session expired or unauthorized on backend -> redirect to login
+    if (error.response?.status === 401) {
+      sessionStorage.removeItem('retail_ai_user');
+      window.location.href = '/login';
+      return Promise.reject('Session expired');
+    }
+
     // Better fallback for network/CORS errors
     const message = error.response?.data?.message || 
                     error.response?.data?.error || 

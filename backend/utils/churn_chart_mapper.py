@@ -44,9 +44,13 @@ def generate_chart_data(merged_df, customer_summary_df):
         {"name": "At-Risk Customers", "value": at_risk}
     ]
     
+    # Use robust customer key if available, else name
+    key_col = "_customer_key" if "_customer_key" in merged_df.columns else "Customer Name"
+    sum_key_col = "_customer_key" if "_customer_key" in customer_summary_df.columns else "customer_name"
+
     # Pre-map customer risk to transactions
-    risk_map = customer_summary_df.set_index('customer_name')['churn_prediction']
-    merged_df['_customer_risk_flag'] = merged_df['Customer Name'].map(risk_map).fillna(0).astype(int)
+    risk_map = customer_summary_df.set_index(sum_key_col)['churn_prediction']
+    merged_df['_customer_risk_flag'] = merged_df[key_col].map(risk_map).fillna(0).astype(int)
     
     # Helper: Safe Divide
     def safe_div(a, b):
@@ -81,8 +85,8 @@ def generate_chart_data(merged_df, customer_summary_df):
             res = []
             res_risk = []
             for name, group in grp:
-                tc = group['Customer Name'].nunique()
-                ar = group[group['_customer_risk_flag'] == 1]['Customer Name'].nunique()
+                tc = group[key_col].nunique()
+                ar = group[group['_customer_risk_flag'] == 1][key_col].nunique()
                 label = name.strftime(fmt)
                 res.append({"period": label, "at_risk_customers": ar})
                 res_risk.append({"period": label, "risk_percent": round(safe_div(ar, tc) * 100, 1)})
@@ -106,7 +110,7 @@ def generate_chart_data(merged_df, customer_summary_df):
                 wd_data.append({
                     "weekday": wd_display[idx],
                     "at_risk_transactions": len(sub),
-                    "at_risk_customers": sub['Customer Name'].nunique()
+                    "at_risk_customers": sub[key_col].nunique()
                 })
             chart_data['churn_activity_by_weekday'][p_key] = wd_data
             
@@ -120,8 +124,8 @@ def generate_chart_data(merged_df, customer_summary_df):
         m_data_all = []
         for m in range(1, 13):
             sub = merged_df[merged_df['_month'] == m]
-            tc = sub['Customer Name'].nunique()
-            ar = sub[sub['_customer_risk_flag'] == 1]['Customer Name'].nunique()
+            tc = sub[key_col].nunique()
+            ar = sub[sub['_customer_risk_flag'] == 1][key_col].nunique()
             m_data_all.append({
                 "month": month_names[m-1],
                 "risk_rate": round(safe_div(ar, tc) * 100, 1),
@@ -137,8 +141,8 @@ def generate_chart_data(merged_df, customer_summary_df):
             y_df = merged_df[merged_df['_year'] == y]
             for m in range(1, 13):
                 sub = y_df[y_df['_month'] == m]
-                tc = sub['Customer Name'].nunique()
-                ar = sub[sub['_customer_risk_flag'] == 1]['Customer Name'].nunique()
+                tc = sub[key_col].nunique()
+                ar = sub[sub['_customer_risk_flag'] == 1][key_col].nunique()
                 m_data_y.append({
                     "month": month_names[m-1],
                     "risk_rate": round(safe_div(ar, tc) * 100, 1),
@@ -154,8 +158,8 @@ def generate_chart_data(merged_df, customer_summary_df):
         cat_risk = []
         cat_rev = []
         for cat, group in c_grp:
-            tc = group['Customer Name'].nunique()
-            ar = group[group['_customer_risk_flag'] == 1]['Customer Name'].nunique()
+            tc = group[key_col].nunique()
+            ar = group[group['_customer_risk_flag'] == 1][key_col].nunique()
             rev_risk = float(group[group['_customer_risk_flag'] == 1]['Total Purchase Amount'].sum())
             rev_tot = float(group['Total Purchase Amount'].sum())
             
@@ -180,7 +184,7 @@ def generate_chart_data(merged_df, customer_summary_df):
     # Payment Methods
     pm_df = None
     if "Payment Method" in merged_df:
-        pref_pm = merged_df.groupby("Customer Name")["Payment Method"].agg(lambda x: x.mode()[0] if not x.mode().empty else "Unknown")
+        pref_pm = merged_df.groupby(key_col)["Payment Method"].agg(lambda x: x.mode()[0] if not x.mode().empty else "Unknown")
         pm_df = pd.DataFrame({'pm': pref_pm, 'risk': risk_map})
         pm_ar = pm_df[pm_df['risk'] == 1].groupby('pm').size()
         pm_res = []
@@ -193,8 +197,8 @@ def generate_chart_data(merged_df, customer_summary_df):
     if not customer_summary_df.empty and '_dt' in merged_df and not merged_df['_dt'].isna().all():
         norm_dt = merged_df['_dt'].dt.normalize()
         max_dt_cust = norm_dt.max()
-        last_order_dt = merged_df.groupby("Customer Name")['_dt'].max().dt.normalize()
-        customer_summary_df['_last_dt'] = customer_summary_df['customer_name'].map(last_order_dt)
+        last_order_dt = merged_df.groupby(key_col)['_dt'].max().dt.normalize()
+        customer_summary_df['_last_dt'] = customer_summary_df[sum_key_col].map(last_order_dt)
         customer_summary_df['recency_days'] = (max_dt_cust - customer_summary_df['_last_dt']).dt.days
         
         def get_bucket(d):
@@ -250,10 +254,10 @@ def generate_chart_data(merged_df, customer_summary_df):
         chart_data['return_behavior_by_risk_segment'] = ret_seg_res
 
     # Churn Risk by AOV Band (formerly Price Sensitivity)
-    if "Total Purchase Amount" in merged_df and "Customer Name" in merged_df:
+    if "Total Purchase Amount" in merged_df and key_col in merged_df:
         try:
-            cust_rev = merged_df.groupby("Customer Name")["Total Purchase Amount"].sum()
-            cust_ord = merged_df.groupby("Customer Name").size()
+            cust_rev = merged_df.groupby(key_col)["Total Purchase Amount"].sum()
+            cust_ord = merged_df.groupby(key_col).size()
             cust_aov = cust_rev / cust_ord
             
             band_df = pd.DataFrame({

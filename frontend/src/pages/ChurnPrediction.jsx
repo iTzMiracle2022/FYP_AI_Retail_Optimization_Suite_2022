@@ -3,7 +3,7 @@ import Navbar from '../components/common/Navbar';
 import { useAuth } from '../context/AuthContext';
 import { useApp } from '../context/AppContext';
 import API from '../api/index';
-import { Users, AlertTriangle, Activity, Play, ShieldCheck, TrendingUp, DollarSign, Search, Filter, Download, ChevronLeft, ChevronRight, Bookmark, SlidersHorizontal, Calendar, ArrowLeft } from 'lucide-react';
+import { Users, AlertTriangle, Activity, Play, ShieldCheck, TrendingUp, DollarSign, Search, Filter, Download, ChevronLeft, ChevronRight, Bookmark, SlidersHorizontal, Calendar, ArrowLeft, Info } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import './CustomerListCRM.css';
 import { ResponsiveContainer, PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, LineChart, Line, ComposedChart } from 'recharts';
@@ -196,7 +196,8 @@ const AIBehaviorTooltip = ({ active, payload, label, type }) => {
   const riskMeaning = {
     'Low Risk': 'Customers with comparatively stable behavior',
     Watchlist: 'Customers showing moderate behavioral risk signals',
-    'High Risk': 'Highest-risk customer segment compared with the current customer base'
+    'Highest Available Risk': 'Top relative risk tier for this dataset',
+    'High Risk': 'Customers above the absolute high-confidence cutoff'
   };
   const rowsByType = {
     riskZone: [
@@ -271,9 +272,12 @@ const normalizeRiskZoneLabel = (value) => {
   const normalized = String(value ?? '').trim().toLowerCase();
   if (normalized === '0' || normalized === 'low' || normalized === 'low risk') return 'Low Risk';
   if (normalized === '1' || normalized === 'medium' || normalized === 'medium risk' || normalized === 'watchlist') return 'Watchlist';
+  if (normalized === 'highest available risk' || normalized === 'highest available' || normalized === 'relative high' || normalized === 'relatively elevated' || normalized === 'elevated') return 'Highest Available Risk';
   if (normalized === '2' || normalized === 'high' || normalized === 'high risk') return 'High Risk';
   return value || 'Unknown';
 };
+
+const RISK_ZONE_ORDER = ['Low Risk', 'Watchlist', 'Highest Available Risk', 'High Risk'];
 
 const AOV_BAND_ORDER = ['Low AOV', 'Mid AOV', 'High AOV', 'Premium AOV'];
 
@@ -304,6 +308,7 @@ const normalizeAovBandChartRows = (rows = []) => {
 const getAiRecommendedAction = (riskZone) => {
   const zone = normalizeRiskZoneLabel(riskZone);
   if (zone === 'High Risk') return 'Priority Outreach';
+  if (zone === 'Highest Available Risk') return 'Review Top-Ranked Risk';
   if (zone === 'Watchlist') return 'Monitor Customer';
   if (zone === 'Low Risk') return 'Retain Customer';
   return '-';
@@ -312,6 +317,7 @@ const getAiRecommendedAction = (riskZone) => {
 const getRiskZoneClass = (riskZone) => {
   const zone = normalizeRiskZoneLabel(riskZone);
   if (zone === 'High Risk') return 'at-risk';
+  if (zone === 'Highest Available Risk') return 'medium';
   if (zone === 'Watchlist') return 'medium';
   if (zone === 'Low Risk') return 'safe';
   return 'muted';
@@ -319,6 +325,7 @@ const getRiskZoneClass = (riskZone) => {
 
 const getActionClass = (action) => {
   if (action === 'Priority Outreach') return 'outreach';
+  if (action === 'Review Top-Ranked Risk') return 'review';
   if (action === 'Monitor Customer') return 'review';
   return 'monitor';
 };
@@ -332,18 +339,20 @@ const buildAiBehaviorCharts = (snapshot = [], topSignals = []) => {
     return items.reduce((sum, item) => sum + (Number(item[key]) || 0), 0) / items.length;
   };
 
-  const riskOrder = ['Low Risk', 'Watchlist', 'High Risk'];
-  const ai_predicted_risk_distribution = riskOrder.map(zone => {
-    const customerCount = rows.filter(row => normalizeRiskZoneLabel(row.risk_zone) === zone).length;
-    return {
-      label: zone,
-      name: zone,
-      risk_zone: zone,
-      customer_count: customerCount,
-      percentage: pct(customerCount),
-      avg_model_risk_score: Number(avg(rows.filter(row => normalizeRiskZoneLabel(row.risk_zone) === zone), 'risk_score_percent').toFixed(1))
-    };
-  });
+  const ai_predicted_risk_distribution = RISK_ZONE_ORDER
+    .map(zone => {
+      const zoneRows = rows.filter(row => normalizeRiskZoneLabel(row.risk_zone) === zone);
+      const customerCount = zoneRows.length;
+      return {
+        label: zone,
+        name: zone,
+        risk_zone: zone,
+        customer_count: customerCount,
+        percentage: pct(customerCount),
+        avg_model_risk_score: Number(avg(zoneRows, 'risk_score_percent').toFixed(1))
+      };
+    })
+    .filter(row => row.customer_count > 0);
 
   const bandLabels = ['0-20%', '20-40%', '40-60%', '60-80%', '80-100%'];
   const bandCounts = Object.fromEntries(bandLabels.map(band => [band, 0]));
@@ -369,7 +378,7 @@ const buildAiBehaviorCharts = (snapshot = [], topSignals = []) => {
     });
     return Array.from(groups.entries())
       .map(([key, items]) => {
-        const highRisk = items.filter(row => normalizeRiskZoneLabel(row.risk_zone) === 'High Risk').length;
+        const highRisk = items.filter(row => ['High Risk', 'Highest Available Risk'].includes(normalizeRiskZoneLabel(row.risk_zone))).length;
         const displayLabel = String(key || 'Unknown');
         const base = {
           label: displayLabel,
@@ -407,8 +416,8 @@ const buildAiBehaviorCharts = (snapshot = [], topSignals = []) => {
         customer_count: items.length,
         probability_weighted_revenue_exposure: Number(exposure.toFixed(2)),
         avg_model_risk_score: Number(avg(items, 'risk_score_percent').toFixed(1)),
-        high_risk_customers: items.filter(row => normalizeRiskZoneLabel(row.risk_zone) === 'High Risk').length,
-        high_risk_rate: pct(items.filter(row => normalizeRiskZoneLabel(row.risk_zone) === 'High Risk').length, items.length)
+        high_risk_customers: items.filter(row => ['High Risk', 'Highest Available Risk'].includes(normalizeRiskZoneLabel(row.risk_zone))).length,
+        high_risk_rate: pct(items.filter(row => ['High Risk', 'Highest Available Risk'].includes(normalizeRiskZoneLabel(row.risk_zone))).length, items.length)
       };
     })
     .sort((a, b) => b.probability_weighted_revenue_exposure - a.probability_weighted_revenue_exposure)
@@ -454,6 +463,7 @@ const ChurnPrediction = () => {
     recencyBucket: 'All',
     aovBand: 'All'
   });
+  const [isAiRiskDetailsOpen, setIsAiRiskDetailsOpen] = useState(false);
   const [isAdvancedFiltersOpen, setIsAdvancedFiltersOpen] = useState(false);
   const defaultAdvancedFilters = {
     category: 'All Categories',
@@ -489,6 +499,7 @@ const ChurnPrediction = () => {
 
   const dateRangeRef = useRef(null);
   const advancedFiltersRef = useRef(null);
+  const aiRiskDetailsRef = useRef(null);
 
   const handleToggleDateRange = () => {
     setIsAdvancedFiltersOpen(false);
@@ -514,12 +525,16 @@ const ChurnPrediction = () => {
       if (isAdvancedFiltersOpen && advancedFiltersRef.current && !advancedFiltersRef.current.contains(event.target)) {
         setIsAdvancedFiltersOpen(false);
       }
+      if (isAiRiskDetailsOpen && aiRiskDetailsRef.current && !aiRiskDetailsRef.current.contains(event.target)) {
+        setIsAiRiskDetailsOpen(false);
+      }
     };
     
     const handleEscape = (event) => {
       if (event.key === 'Escape') {
         setIsDateRangeOpen(false);
         setIsAdvancedFiltersOpen(false);
+        setIsAiRiskDetailsOpen(false);
       }
     };
 
@@ -530,7 +545,7 @@ const ChurnPrediction = () => {
       document.removeEventListener('mousedown', handleClickOutside);
       document.removeEventListener('keydown', handleEscape);
     };
-  }, [isDateRangeOpen, isAdvancedFiltersOpen]);
+  }, [isDateRangeOpen, isAdvancedFiltersOpen, isAiRiskDetailsOpen]);
 
   const canShowHistoricalStatus = Boolean(results && (results.can_show_historical_status ?? results.has_actual_churn_label ?? true));
   const canShowAiRisk = Boolean(results && (results.can_show_ai_risk ?? (results.customer_summary || []).some(row => row.ai_risk_zone || row.ai_churn_estimate !== undefined)));
@@ -791,8 +806,8 @@ const ChurnPrediction = () => {
       return dateB - dateA;
     };
     const sortByAiPriorityThenRevenue = (a, b) => {
-      const priority = { 'High Risk': 0, Watchlist: 1, 'Low Risk': 2 };
-      const priorityDiff = (priority[normalizeRiskZoneLabel(a.aiRiskZone)] ?? 3) - (priority[normalizeRiskZoneLabel(b.aiRiskZone)] ?? 3);
+      const priority = { 'High Risk': 0, 'Highest Available Risk': 1, Watchlist: 2, 'Low Risk': 3 };
+      const priorityDiff = (priority[normalizeRiskZoneLabel(a.aiRiskZone)] ?? 4) - (priority[normalizeRiskZoneLabel(b.aiRiskZone)] ?? 4);
       if (priorityDiff !== 0) return priorityDiff;
       return sortByRevenueThenRecent(a, b);
     };
@@ -869,15 +884,39 @@ const ChurnPrediction = () => {
   const safeCustomers = kpis.safe_customers || results?.safe_customers || 0;
   const atRiskCustomers = kpis.at_risk_customers || results?.at_risk_customers || 0;
   const churnRiskPercentage = kpis.churn_risk_percentage || ((atRiskCustomers / (totalCustomers || 1)) * 100) || 0;
+  const modelAgreementRate = kpis.model_agreement_rate;
   const featureImportance = results?.feature_importance || {};
   const chartData = results?.chart_data || {};
   const aiChurnAnalysis = results?.ai_churn_analysis || {};
+  const aiRiskZoneCutoffs = aiChurnAnalysis.metadata?.risk_zone_cutoffs || {};
+  const hasAiRiskCutoffMetadata = Object.keys(aiRiskZoneCutoffs).length > 0;
+  const showHighestAvailableMessage = Boolean(
+    hasAiRiskCutoffMetadata &&
+    Number(aiRiskZoneCutoffs.absolute_high_count ?? 0) === 0 &&
+    aiRiskZoneCutoffs.relative_fallback_enabled
+  );
+  const aiRiskTechnicalDetails = [
+    { label: 'Decision threshold', value: Number(aiRiskZoneCutoffs.selected_threshold) * 100, type: 'percent' },
+    { label: 'High Risk cutoff', value: aiRiskZoneCutoffs.absolute_high_min_score_percent ?? aiRiskZoneCutoffs.high_min_score_percent, type: 'percent' },
+    { label: 'Highest Available cutoff', value: aiRiskZoneCutoffs.highest_available_min_score_percent, type: 'percent' },
+    { label: 'Max observed score', value: aiRiskZoneCutoffs.max_observed_score_percent, type: 'percent' },
+    { label: 'Absolute High count', value: aiRiskZoneCutoffs.absolute_high_count, type: 'count' },
+    { label: 'Highest Available count', value: aiRiskZoneCutoffs.relative_fallback_count, type: 'count' }
+  ].filter(item => item.value !== null && item.value !== undefined && Number.isFinite(Number(item.value)));
   const aiBehaviorSnapshot = aiChurnAnalysis.ai_behavior_snapshot || [];
   const aiFilterCount = Object.values(aiBehaviorFilters).filter(value => value !== 'All').length;
   const aiBehaviorFilterOptions = useMemo(() => {
     const options = aiChurnAnalysis.filter_options || {};
     const fromSnapshot = (key) => [...new Set(aiBehaviorSnapshot.map(row => row?.[key]).filter(Boolean).map(String))].sort();
-    const riskZones = [...new Set((options.risk_zones || ['Low Risk', 'Watchlist', 'High Risk']).map(normalizeRiskZoneLabel))].filter(zone => zone !== 'Unknown');
+    const riskZoneCounts = aiBehaviorSnapshot.reduce((counts, row) => {
+      const zone = normalizeRiskZoneLabel(row?.risk_zone);
+      if (zone !== 'Unknown') counts[zone] = (counts[zone] || 0) + 1;
+      return counts;
+    }, {});
+    const sourceRiskZones = options.risk_zones?.length ? options.risk_zones : RISK_ZONE_ORDER;
+    const riskZones = RISK_ZONE_ORDER.filter(zone => (
+      sourceRiskZones.map(normalizeRiskZoneLabel).includes(zone) && (riskZoneCounts[zone] || 0) > 0
+    ));
     const sourceAovBands = options.aov_bands?.length ? options.aov_bands : fromSnapshot('aov_band');
     return {
       riskZones,
@@ -906,6 +945,12 @@ const ChurnPrediction = () => {
     }
     return aiChurnAnalysis;
   }, [aiFilterCount, aiBehaviorSnapshot, filteredAiBehaviorSnapshot, aiChurnAnalysis]);
+  const riskScoreBandData = filteredAiBehaviorCharts.risk_score_bands || [];
+  const hasAiRiskTechnicalPanel = aiRiskTechnicalDetails.length > 0 || riskScoreBandData.length > 0;
+  const aiRiskDistributionData = useMemo(() => {
+    return (filteredAiBehaviorCharts.ai_predicted_risk_distribution || [])
+      .filter(row => Number(row?.customer_count || 0) > 0);
+  }, [filteredAiBehaviorCharts.ai_predicted_risk_distribution]);
   const aiRiskByAovBandData = useMemo(() => {
     return normalizeAovBandChartRows(filteredAiBehaviorCharts.ai_risk_by_aov_band || []);
   }, [filteredAiBehaviorCharts.ai_risk_by_aov_band]);
@@ -1240,6 +1285,9 @@ const ChurnPrediction = () => {
                 <MetricCard icon={ShieldCheck} label="Safe Customers" value={safeCustomers.toLocaleString()} color="#10B981" />
                 <MetricCard icon={AlertTriangle} label="At-Risk Customers" value={atRiskCustomers.toLocaleString()} color="#EF4444" />
                 <MetricCard icon={TrendingUp} label="Churn Risk" value={`${churnRiskPercentage.toFixed(2)}%`} color="#F59E0B" />
+                {modelAgreementRate !== null && modelAgreementRate !== undefined && (
+                  <MetricCard icon={ShieldCheck} label="Model Agreement" value={`${Number(modelAgreementRate).toFixed(2)}%`} color="#6366F1" />
+                )}
               </>
             )}
           </div>
@@ -1248,9 +1296,63 @@ const ChurnPrediction = () => {
           {results?.ai_churn_analysis && (
             <div style={{ marginBottom: '2.5rem' }}>
               <div style={{ marginBottom: '1.25rem' }}>
-                <h3 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#0F172A', margin: '0 0 0.25rem 0' }}>AI Behavioral Churn Signals</h3>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', position: 'relative' }} ref={aiRiskDetailsRef}>
+                  <h3 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#0F172A', margin: '0 0 0.25rem 0' }}>AI Behavioral Churn Signals</h3>
+                  {hasAiRiskTechnicalPanel && (
+                    <button
+                      type="button"
+                      aria-label="AI risk technical details"
+                      onClick={() => setIsAiRiskDetailsOpen(prev => !prev)}
+                      style={{ width: 28, height: 28, borderRadius: '50%', border: '1px solid #CBD5E1', background: '#FFFFFF', color: '#64748B', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', marginBottom: '0.25rem' }}
+                    >
+                      <Info size={15} />
+                    </button>
+                  )}
+                  {isAiRiskDetailsOpen && hasAiRiskTechnicalPanel && (
+                    <div style={{ position: 'absolute', top: '2rem', left: 0, zIndex: 30, width: 'min(680px, calc(100vw - 2rem))', maxHeight: 'min(70vh, 620px)', overflowY: 'auto', background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: '10px', boxShadow: '0 18px 42px rgba(15, 23, 42, 0.14)', padding: '0.95rem' }}>
+                      {aiRiskTechnicalDetails.length > 0 && (
+                        <div>
+                          <p style={{ margin: '0 0 0.55rem 0', fontSize: '0.78rem', color: '#0F172A', fontWeight: 900 }}>Risk zone calculation</p>
+                          {aiRiskTechnicalDetails.map(item => (
+                            <div key={item.label} style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', padding: '0.28rem 0', borderTop: '1px solid #F1F5F9' }}>
+                              <span style={{ fontSize: '0.75rem', color: '#64748B', fontWeight: 700 }}>{item.label}</span>
+                              <span style={{ fontSize: '0.75rem', color: '#0F172A', fontWeight: 900 }}>{item.type === 'count' ? formatNumber(item.value) : formatPct(item.value)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      {riskScoreBandData.length > 0 && (
+                        <div style={{ marginTop: aiRiskTechnicalDetails.length > 0 ? '1rem' : 0, paddingTop: aiRiskTechnicalDetails.length > 0 ? '0.9rem' : 0, borderTop: aiRiskTechnicalDetails.length > 0 ? '1px solid #E2E8F0' : 'none' }}>
+                          <p style={{ margin: 0, fontSize: '0.78rem', color: '#0F172A', fontWeight: 900 }}>Technical View: Raw Probability Distribution</p>
+                          <p style={{ margin: '0.25rem 0 0.75rem 0', fontSize: '0.75rem', color: '#64748B', lineHeight: 1.45 }}>Shows how many customers fall into each raw model-probability range, independent of the business risk-zone labels above.</p>
+                          <div style={{ height: 220, minWidth: 0 }}>
+                            <ResponsiveContainer width="100%" height="100%">
+                              <BarChart data={riskScoreBandData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" />
+                                <XAxis dataKey="label" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#64748B' }} />
+                                <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#64748B' }} allowDecimals={false} />
+                                <RechartsTooltip cursor={{ fill: '#F8FAFC' }} content={<AIBehaviorTooltip type="scoreBand" />} />
+                                <Bar dataKey="customer_count" name="Customers" fill="#8B5CF6" radius={[4, 4, 0, 0]} />
+                              </BarChart>
+                            </ResponsiveContainer>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
                 <p style={{ fontSize: '0.9rem', color: '#64748B', margin: 0 }}>Customer-level behavioral patterns learned from purchase activity, frequency, revenue, recency, returns, and value trends.</p>
               </div>
+
+              {showHighestAvailableMessage && (
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.65rem', padding: '0.85rem 1rem', background: '#FFF7ED', border: '1px solid #FED7AA', borderRadius: '8px', marginBottom: '1rem' }}>
+                  <AlertTriangle size={17} color="#C2410C" style={{ flexShrink: 0, marginTop: 2 }} />
+                  <div>
+                    <p style={{ margin: 0, fontSize: '0.86rem', color: '#9A3412', fontWeight: 800 }}>No customers currently show very high churn confidence.</p>
+                    <p style={{ margin: '0.2rem 0 0', fontSize: '0.8rem', color: '#9A3412', lineHeight: 1.45 }}>Customers marked Highest Available Risk represent the highest relative churn risk in the current data.</p>
+                  </div>
+                </div>
+              )}
 
               {aiBehaviorSnapshot.length > 0 && (
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '0.75rem', padding: '1rem', background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: '12px', marginBottom: '1.5rem' }}>
@@ -1292,11 +1394,11 @@ const ChurnPrediction = () => {
                   <h4 style={{ fontSize: '1.05rem', fontWeight: 800, color: '#0F172A', margin: 0 }}>Behavioral Risk Zone Distribution</h4>
                   <p style={{ fontSize: '0.85rem', color: '#64748B', margin: '0.25rem 0 1.5rem 0' }}>Risk zones are based on customer behavior score bands.</p>
                   <div style={{ flex: 1, minHeight: 0 }}>
-                    {filteredAiBehaviorCharts.ai_predicted_risk_distribution?.length > 0 ? (
+                    {aiRiskDistributionData.length > 0 ? (
                       <ResponsiveContainer width="100%" height="100%">
                         <PieChart>
                           <Pie
-                            data={filteredAiBehaviorCharts.ai_predicted_risk_distribution}
+                            data={aiRiskDistributionData}
                             cx="50%" cy="50%"
                             innerRadius={60} outerRadius={90}
                             paddingAngle={2}
@@ -1306,8 +1408,8 @@ const ChurnPrediction = () => {
                             stroke="#FFFFFF"
                             strokeWidth={2}
                           >
-                            {filteredAiBehaviorCharts.ai_predicted_risk_distribution.map((entry, index) => {
-                              const colors = { 'High Risk': '#EF4444', Watchlist: '#F59E0B', 'Low Risk': '#10B981' };
+                            {aiRiskDistributionData.map((entry, index) => {
+                              const colors = { 'High Risk': '#EF4444', 'Highest Available Risk': '#F97316', Watchlist: '#F59E0B', 'Low Risk': '#10B981' };
                               return <Cell key={`cell-${index}`} fill={colors[entry.label] || '#94A3B8'} />;
                             })}
                           </Pie>
@@ -1317,33 +1419,12 @@ const ChurnPrediction = () => {
                       </ResponsiveContainer>
                     ) : (
                        <div style={{ flex: 1, display: 'flex', justifyContent: 'center', alignItems: 'center', background: '#F8FAFC', borderRadius: '12px', border: '1px dashed #E2E8F0', height: '100%' }}>
-                         <p style={{ color: '#64748B', fontSize: '0.9rem' }}>Behavior fields were not returned for this dataset.</p>
+                         <p style={{ color: '#64748B', fontSize: '0.9rem' }}>{aiBehaviorSnapshot.length > 0 ? "No customers match the active filters." : "Behavior fields were not returned for this dataset."}</p>
                        </div>
                     )}
                   </div>
                 </div>
 
-                <div className="premium-card churnChartCard" style={{ padding: '1.5rem', height: '340px', display: 'flex', flexDirection: 'column' }}>
-                  <h4 style={{ fontSize: '1.05rem', fontWeight: 800, color: '#0F172A', margin: 0 }}>Risk Score Bands</h4>
-                  <p style={{ fontSize: '0.85rem', color: '#64748B', margin: '0.25rem 0 1.5rem 0' }}>Customer distribution across predicted churn-risk score ranges.</p>
-                  <div style={{ flex: 1, minHeight: 0 }}>
-                    {filteredAiBehaviorCharts.risk_score_bands?.length > 0 ? (
-                      <ResponsiveContainer width="100%" height="100%">
-                        <BarChart data={filteredAiBehaviorCharts.risk_score_bands} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" />
-                          <XAxis dataKey="label" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#64748B' }} />
-                          <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#64748B' }} allowDecimals={false} />
-                          <RechartsTooltip cursor={{ fill: '#F8FAFC' }} content={<AIBehaviorTooltip type="scoreBand" />} />
-                          <Bar dataKey="customer_count" name="Customers" fill="#8B5CF6" radius={[4, 4, 0, 0]} />
-                        </BarChart>
-                      </ResponsiveContainer>
-                    ) : (
-                       <div style={{ flex: 1, display: 'flex', justifyContent: 'center', alignItems: 'center', background: '#F8FAFC', borderRadius: '12px', border: '1px dashed #E2E8F0', height: '100%' }}>
-                         <p style={{ color: '#64748B', fontSize: '0.9rem' }}>Behavior fields were not returned for this dataset.</p>
-                       </div>
-                    )}
-                  </div>
-                </div>
               </div>
 
               {/* AI Charts Grid Row 2 */}
@@ -1364,7 +1445,7 @@ const ChurnPrediction = () => {
                       </ResponsiveContainer>
                     ) : (
                        <div style={{ flex: 1, display: 'flex', justifyContent: 'center', alignItems: 'center', background: '#F8FAFC', borderRadius: '12px', border: '1px dashed #E2E8F0', height: '100%' }}>
-                         <p style={{ color: '#64748B', fontSize: '0.9rem' }}>Behavior fields were not returned for this dataset.</p>
+                         <p style={{ color: '#64748B', fontSize: '0.9rem' }}>{aiBehaviorSnapshot.length > 0 ? "No customers match the active filters." : "Behavior fields were not returned for this dataset."}</p>
                        </div>
                     )}
                   </div>
@@ -1386,7 +1467,7 @@ const ChurnPrediction = () => {
                       </ResponsiveContainer>
                     ) : (
                        <div style={{ flex: 1, display: 'flex', justifyContent: 'center', alignItems: 'center', background: '#F8FAFC', borderRadius: '12px', border: '1px dashed #E2E8F0', height: '100%' }}>
-                         <p style={{ color: '#64748B', fontSize: '0.9rem' }}>Behavior fields were not returned for this dataset.</p>
+                         <p style={{ color: '#64748B', fontSize: '0.9rem' }}>{aiBehaviorSnapshot.length > 0 ? "No customers match the active filters." : "Behavior fields were not returned for this dataset."}</p>
                        </div>
                     )}
                   </div>
@@ -1411,7 +1492,7 @@ const ChurnPrediction = () => {
                       </ResponsiveContainer>
                     ) : (
                        <div style={{ flex: 1, display: 'flex', justifyContent: 'center', alignItems: 'center', background: '#F8FAFC', borderRadius: '12px', border: '1px dashed #E2E8F0', height: '100%' }}>
-                         <p style={{ color: '#64748B', fontSize: '0.9rem' }}>Behavior fields were not returned for this dataset.</p>
+                         <p style={{ color: '#64748B', fontSize: '0.9rem' }}>{aiBehaviorSnapshot.length > 0 ? "No customers match the active filters." : "Behavior fields were not returned for this dataset."}</p>
                        </div>
                     )}
                   </div>
@@ -1433,7 +1514,7 @@ const ChurnPrediction = () => {
                       </ResponsiveContainer>
                     ) : (
                        <div style={{ flex: 1, display: 'flex', justifyContent: 'center', alignItems: 'center', background: '#F8FAFC', borderRadius: '12px', border: '1px dashed #E2E8F0', height: '100%' }}>
-                         <p style={{ color: '#64748B', fontSize: '0.9rem' }}>Behavior fields were not returned for this dataset.</p>
+                         <p style={{ color: '#64748B', fontSize: '0.9rem' }}>{aiBehaviorSnapshot.length > 0 ? "No customers match the active filters." : "Behavior fields were not returned for this dataset."}</p>
                        </div>
                     )}
                   </div>
@@ -1458,7 +1539,7 @@ const ChurnPrediction = () => {
                       </ResponsiveContainer>
                     ) : (
                        <div style={{ flex: 1, display: 'flex', justifyContent: 'center', alignItems: 'center', background: '#F8FAFC', borderRadius: '12px', border: '1px dashed #E2E8F0', height: '100%' }}>
-                         <p style={{ color: '#64748B', fontSize: '0.9rem' }}>Behavior fields were not returned for this dataset.</p>
+                         <p style={{ color: '#64748B', fontSize: '0.9rem' }}>{aiBehaviorSnapshot.length > 0 ? "No customers match the active filters." : "Behavior fields were not returned for this dataset."}</p>
                        </div>
                     )}
                   </div>
@@ -1480,7 +1561,7 @@ const ChurnPrediction = () => {
                       </ResponsiveContainer>
                     ) : (
                        <div style={{ flex: 1, display: 'flex', justifyContent: 'center', alignItems: 'center', background: '#F8FAFC', borderRadius: '12px', border: '1px dashed #E2E8F0', height: '100%' }}>
-                         <p style={{ color: '#64748B', fontSize: '0.9rem' }}>Behavior fields were not returned for this dataset.</p>
+                         <p style={{ color: '#64748B', fontSize: '0.9rem' }}>{aiBehaviorSnapshot.length > 0 ? "No customers match the active filters." : "Behavior fields were not returned for this dataset."}</p>
                        </div>
                     )}
                   </div>
@@ -1929,9 +2010,9 @@ const ChurnPrediction = () => {
                   {canShowAiRisk && (
                     <select className="crm-toolbar-select" value={aiRiskZoneFilter} onChange={e => setAiRiskZoneFilter(e.target.value)}>
                       <option value="All">All AI Risk</option>
-                      <option value="Low Risk">Low Risk</option>
-                      <option value="Watchlist">Watchlist</option>
-                      <option value="High Risk">High Risk</option>
+                      {aiBehaviorFilterOptions.riskZones.map(zone => (
+                        <option key={zone} value={zone}>{zone}</option>
+                      ))}
                     </select>
                   )}
                   

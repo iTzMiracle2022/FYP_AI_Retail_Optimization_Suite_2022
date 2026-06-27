@@ -19,8 +19,9 @@ from datetime import datetime
 
 import joblib
 
-AI_SNAPSHOT_VERSION = "ai_behavior_snapshot_v4_score_band_50_83_risk_zones"
-CUSTOMER_DASHBOARD_CACHE_VERSION = "customer_dashboard_v1_historical_summary"
+AI_SNAPSHOT_VERSION = "ai_behavior_snapshot_v8_nonzero_risk_zone_payloads"
+CUSTOMER_DASHBOARD_CACHE_VERSION = "customer_dashboard_v4_customer_key_index_reset"
+RISK_ZONE_ORDER = ["Low Risk", "Watchlist", "Highest Available Risk", "High Risk"]
 
 
 def _json_safe(value):
@@ -138,16 +139,14 @@ def _build_customer_dashboard_payload(merged_df, source_df, has_actual_churn_lab
         "max_date": valid_purchase_dates.max().strftime("%Y-%m-%d") if not valid_purchase_dates.empty else None,
     }
 
-    grouped = merged_df.groupby("Customer Name", dropna=False)
+    if "_customer_key" not in merged_df.columns:
+        merged_df["_customer_key"] = predictor._customer_keys(merged_df).reset_index(drop=True)
+
+    grouped = merged_df.groupby("_customer_key", dropna=False)
 
     orders = grouped.size()
     revenue = grouped["Total Purchase Amount"].sum()
     last_order = grouped["Purchase Date"].max().dt.strftime('%Y-%m-%d')
-    if "actual_churn" in merged_df and has_actual_churn_label:
-        dashboard_churn_status = grouped["actual_churn"].max()
-    else:
-        dashboard_churn_status = pd.Series([None]*len(grouped), index=grouped.groups.keys())
-
     if "model_churn_probability" in merged_df:
         max_probability = grouped["model_churn_probability"].max()
     else:
@@ -160,8 +159,10 @@ def _build_customer_dashboard_payload(merged_df, source_df, has_actual_churn_lab
         actual_churn = grouped["actual_churn"].max()
     else:
         actual_churn = pd.Series([None]*len(grouped), index=grouped.groups.keys())
+    dashboard_churn_status = model_predicted_churn
 
-    customer_ref_id = grouped["Customer ID"].min() if "Customer ID" in merged_df else grouped["_source_index"].min()
+    customer_display_names = grouped["Customer Name"].first().fillna(orders.index.to_series()).astype(str)
+    customer_ref_id = grouped["Customer ID"].first() if "Customer ID" in merged_df else grouped["_source_index"].min()
 
     gender = grouped["Gender"].first() if "Gender" in merged_df else pd.Series(None, index=grouped.groups.keys())
     age = grouped["Age"].first() if "Age" in merged_df else (grouped["Customer Age"].first() if "Customer Age" in merged_df else pd.Series(None, index=grouped.groups.keys()))
@@ -173,7 +174,7 @@ def _build_customer_dashboard_payload(merged_df, source_df, has_actual_churn_lab
     # Optional lightweight transactions for exact frontend date-range recalculation.
     # Default response skips this large nested payload to keep Churn analysis responsive.
     if include_customer_transactions and "Purchase Date" in merged_df and "Total Purchase Amount" in merged_df:
-        cols = ["Customer Name", "Purchase Date", "Total Purchase Amount"]
+        cols = ["_customer_key", "Purchase Date", "Total Purchase Amount"]
         opt_cols = {"Product Category": "category", "Payment Method": "payment_method", "Product Price": "price", "Quantity": "quantity", "Returns": "returns"}
         for c in opt_cols.keys():
             if c in merged_df:
@@ -184,7 +185,7 @@ def _build_customer_dashboard_payload(merged_df, source_df, has_actual_churn_lab
         tx_records = tx_df.to_dict('records')
         tx_grouped = {}
         for r in tx_records:
-            c = r["Customer Name"]
+            c = r["_customer_key"]
             if c not in tx_grouped:
                 tx_grouped[c] = []
 
@@ -202,12 +203,12 @@ def _build_customer_dashboard_payload(merged_df, source_df, has_actual_churn_lab
     else:
         transactions = None
 
-    historical_status = dashboard_churn_status.apply(
+    historical_status = actual_churn.apply(
         lambda value: "At Risk" if pd.notna(value) and int(value) == 1 else ("Safe" if pd.notna(value) else None)
     )
 
     customer_summary_df = pd.DataFrame({
-        'customer_name': orders.index.astype(str),
+        'customer_name': customer_display_names,
         'customer_ref_id': customer_ref_id.fillna(0).astype(int),
         'orders': orders.fillna(0).astype(int),
         'revenue': revenue.fillna(0).astype(float),
@@ -224,7 +225,8 @@ def _build_customer_dashboard_payload(merged_df, source_df, has_actual_churn_lab
         'returns': returns.fillna(0).astype(float),
         'categories': categories,
         'payment_methods': payment_methods,
-    })
+    }, index=orders.index)
+    customer_summary_df["_customer_key"] = customer_summary_df.index.astype(str)
     if transactions is not None:
         customer_summary_df["transactions"] = transactions
 
@@ -245,6 +247,7 @@ def _build_customer_dashboard_payload(merged_df, source_df, has_actual_churn_lab
             ascending=[False, False, False]
         )
         customer_summary_df.drop(columns=['_is_at_risk'], inplace=True)
+    customer_summary_df = customer_summary_df.reset_index(drop=True)
 
     filter_options = {
         'categories': source_df.get('Product Category', pd.Series([])).dropna().unique().tolist(),
@@ -254,14 +257,30 @@ def _build_customer_dashboard_payload(merged_df, source_df, has_actual_churn_lab
 
     total_transactions = len(merged_df)
     total_customers = len(customer_summary_df)
-    if has_actual_churn_label and not customer_summary_df.empty:
-        at_risk_customers = int(sum(customer_summary_df['churn_prediction'] == 1))
-        safe_customers = int(sum(customer_summary_df['churn_prediction'] == 0))
+    if not customer_summary_df.empty:
+        at_risk_customers = int(sum(customer_summary_df['model_predicted_churn'] == 1))
+        safe_customers = int(sum(customer_summary_df['model_predicted_churn'] == 0))
     else:
-        at_risk_customers = None
-        safe_customers = None
+        at_risk_customers = 0
+        safe_customers = 0
     medium_risk_customers = 0
-    churn_risk_percentage = (at_risk_customers / total_customers * 100) if has_actual_churn_label and total_customers > 0 else None
+    churn_risk_percentage = (at_risk_customers / total_customers * 100) if total_customers > 0 else 0.0
+
+    historical_safe_customers = None
+    historical_at_risk_customers = None
+    model_agreement_customers = None
+    model_disagreement_customers = None
+    model_agreement_rate = None
+    if has_actual_churn_label and not customer_summary_df.empty:
+        actual_values = pd.to_numeric(customer_summary_df["actual_churn"], errors="coerce")
+        predicted_values = pd.to_numeric(customer_summary_df["model_predicted_churn"], errors="coerce")
+        labeled_mask = actual_values.notna()
+        labeled_count = int(labeled_mask.sum())
+        historical_at_risk_customers = int((actual_values[labeled_mask] == 1).sum())
+        historical_safe_customers = int((actual_values[labeled_mask] == 0).sum())
+        model_agreement_customers = int((actual_values[labeled_mask].astype(int) == predicted_values[labeled_mask].astype(int)).sum())
+        model_disagreement_customers = labeled_count - model_agreement_customers
+        model_agreement_rate = (model_agreement_customers / labeled_count * 100) if labeled_count else None
 
     summary = {
         'total_transactions': total_transactions,
@@ -269,7 +288,13 @@ def _build_customer_dashboard_payload(merged_df, source_df, has_actual_churn_lab
         'safe_customers': safe_customers,
         'medium_risk_customers': medium_risk_customers,
         'at_risk_customers': at_risk_customers,
-        'churn_risk_percentage': churn_risk_percentage
+        'churn_risk_percentage': churn_risk_percentage,
+        'kpi_source': 'ai_model_predictions',
+        'historical_safe_customers': historical_safe_customers,
+        'historical_at_risk_customers': historical_at_risk_customers,
+        'model_agreement_customers': model_agreement_customers,
+        'model_disagreement_customers': model_disagreement_customers,
+        'model_agreement_rate': model_agreement_rate,
     }
     chart_data = generate_chart_data(merged_df, customer_summary_df.copy()) if has_actual_churn_label else {}
 
@@ -282,38 +307,126 @@ def _build_customer_dashboard_payload(merged_df, source_df, has_actual_churn_lab
     }
 
 
-def _assign_score_band_risk_zones(snapshot_df):
+def _risk_zone_cutoff_percentages(
+    selected_threshold,
+    score_percent=None,
+    at_risk_mask=None,
+    total_count=0,
+    high_risk_quantile=0.90,
+    min_absolute_high_count=10,
+    min_absolute_high_share=0.001,
+):
+    threshold = float(selected_threshold if selected_threshold is not None else 0.5)
+    threshold = min(max(threshold, 0.0), 1.0)
+    low_max_score_percent = round(threshold * 100.0, 1)
+    absolute_high_min_score_percent = round((threshold + ((1.0 - threshold) * 0.5)) * 100.0, 1)
+
+    score_basis = "fallback_midpoint"
+    relative_high_min_score_percent = None
+    absolute_high_count = 0
+    at_risk_count = 0
+    max_observed_score_percent = None
+    if score_percent is not None:
+        numeric_scores = pd.to_numeric(pd.Series(score_percent), errors="coerce")
+        max_observed_score_percent = round(float(numeric_scores.max()), 1) if numeric_scores.notna().any() else None
+        if at_risk_mask is not None:
+            at_risk_flags = pd.Series(at_risk_mask)
+            if len(at_risk_flags) == len(numeric_scores):
+                at_risk_flags.index = numeric_scores.index
+            at_risk_flags = at_risk_flags.fillna(False).astype(bool)
+            at_risk_scores = numeric_scores[at_risk_flags].dropna()
+        else:
+            at_risk_scores = numeric_scores[numeric_scores > low_max_score_percent].dropna()
+            at_risk_flags = numeric_scores > low_max_score_percent
+        at_risk_count = int(at_risk_flags.sum())
+        absolute_high_count = int((at_risk_flags & (numeric_scores >= absolute_high_min_score_percent)).sum())
+        if not at_risk_scores.empty:
+            relative_high_min_score_percent = round(float(at_risk_scores.quantile(high_risk_quantile)), 1)
+            relative_high_min_score_percent = min(max(relative_high_min_score_percent, low_max_score_percent), 100.0)
+            score_basis = "at_risk_score_quantile"
+    minimum_absolute_high_count = max(
+        int(min_absolute_high_count),
+        int(np.ceil(float(total_count or 0) * float(min_absolute_high_share))),
+    )
+    relative_fallback_enabled = (
+        relative_high_min_score_percent is not None
+        and absolute_high_count < minimum_absolute_high_count
+    )
+
+    return {
+        "selected_threshold": threshold,
+        "low_max_score_percent": low_max_score_percent,
+        "watchlist_min_exclusive_score_percent": low_max_score_percent,
+        "absolute_high_min_score_percent": absolute_high_min_score_percent,
+        "high_min_score_percent": absolute_high_min_score_percent,
+        "relative_high_min_score_percent": relative_high_min_score_percent,
+        "highest_available_min_score_percent": relative_high_min_score_percent if relative_fallback_enabled else None,
+        "method": "absolute_threshold_with_relative_fallback",
+        "formula": "high_min = selected_threshold + (1 - selected_threshold) * 0.5; if sparse, highest_available_min = p90(score_percent where model_predicted_churn == 1)",
+        "high_risk_quantile": high_risk_quantile,
+        "score_basis": score_basis,
+        "relative_fallback_enabled": relative_fallback_enabled,
+        "minimum_absolute_high_count": minimum_absolute_high_count,
+        "absolute_high_count": absolute_high_count,
+        "at_risk_count": at_risk_count,
+        "max_observed_score_percent": max_observed_score_percent,
+        "max_observed_probability": round(float(max_observed_score_percent / 100.0), 4) if max_observed_score_percent is not None else None,
+    }
+
+
+def _assign_score_band_risk_zones(snapshot_df, selected_threshold=0.5):
     snapshot_df = snapshot_df.copy()
     total = len(snapshot_df)
+    threshold = float(selected_threshold if selected_threshold is not None else 0.5)
+    threshold = min(max(threshold, 0.0), 1.0)
+    if "risk_score_percent" in snapshot_df:
+        score_percent = pd.to_numeric(snapshot_df["risk_score_percent"], errors="coerce").fillna(0.0)
+    else:
+        probability_source = snapshot_df["model_churn_probability"] if "model_churn_probability" in snapshot_df else pd.Series(0.0, index=snapshot_df.index)
+        score_percent = (pd.to_numeric(probability_source, errors="coerce").fillna(0.0) * 100).round(1)
+    probability_source = snapshot_df["model_churn_probability"] if "model_churn_probability" in snapshot_df else pd.Series(0.0, index=snapshot_df.index)
+    scores = pd.to_numeric(probability_source, errors="coerce").fillna(0.0)
+    if "model_predicted_churn" in snapshot_df:
+        at_risk_mask = pd.to_numeric(snapshot_df["model_predicted_churn"], errors="coerce").fillna(0).astype(int) == 1
+    else:
+        at_risk_mask = scores >= threshold
+    cutoffs = _risk_zone_cutoff_percentages(
+        selected_threshold,
+        score_percent=score_percent,
+        at_risk_mask=at_risk_mask,
+        total_count=total,
+    )
+    low_max_score_percent = cutoffs["low_max_score_percent"]
+    high_min_score_percent = cutoffs["high_min_score_percent"]
+    relative_high_min_score_percent = cutoffs.get("relative_high_min_score_percent")
     if total == 0:
         snapshot_df["risk_zone"] = []
         snapshot_df["model_risk_level"] = []
         snapshot_df["risk_percentile"] = []
-        return snapshot_df, {"low_max_score_percent": None, "high_min_score_percent": None, "method": "score_band"}
+        return snapshot_df, cutoffs
 
-    scores = pd.to_numeric(snapshot_df["model_churn_probability"], errors="coerce").fillna(0.0)
-    if "risk_score_percent" in snapshot_df:
-        score_percent = pd.to_numeric(snapshot_df["risk_score_percent"], errors="coerce").fillna(0.0)
-    else:
-        score_percent = (scores * 100).round(1)
     sorted_index = scores.sort_values(kind="mergesort").index
     positions = pd.Series(np.arange(total), index=sorted_index)
     percentiles = (positions / total) * 100
 
     zones = pd.Series("Low Risk", index=snapshot_df.index, dtype=object)
-    zones.loc[score_percent > 50] = "Watchlist"
-    zones.loc[score_percent >= 83] = "High Risk"
+    zones.loc[at_risk_mask] = "Watchlist"
+    absolute_high_mask = at_risk_mask & (score_percent >= high_min_score_percent)
+    relative_fallback_mask = pd.Series(False, index=snapshot_df.index)
+    if cutoffs.get("relative_fallback_enabled") and relative_high_min_score_percent is not None:
+        relative_fallback_mask = at_risk_mask & ~absolute_high_mask & (score_percent >= relative_high_min_score_percent)
+        zones.loc[relative_fallback_mask] = "Highest Available Risk"
+    zones.loc[absolute_high_mask] = "High Risk"
 
-    cutoffs = {
-        "low_max_score_percent": 50.0,
-        "watchlist_min_exclusive_score_percent": 50.0,
-        "watchlist_max_exclusive_score_percent": 83.0,
-        "high_min_score_percent": 83.0,
-        "method": "score_band",
-        "low_rule": "score <= 50",
-        "watchlist_rule": "score > 50 and score < 83",
-        "high_rule": "score >= 83",
-    }
+    cutoffs["absolute_high_count"] = int(absolute_high_mask.sum())
+    cutoffs["relative_fallback_count"] = int(relative_fallback_mask.sum())
+    cutoffs["watchlist_count"] = int((zones == "Watchlist").sum())
+    cutoffs["low_risk_count"] = int((zones == "Low Risk").sum())
+
+    cutoffs["low_rule"] = "model_predicted_churn == 0"
+    cutoffs["watchlist_rule"] = f"model_predicted_churn == 1 and score < {relative_high_min_score_percent:g}" if cutoffs.get("relative_fallback_enabled") and relative_high_min_score_percent is not None else f"model_predicted_churn == 1 and score < {high_min_score_percent:g}"
+    cutoffs["highest_available_rule"] = f"model_predicted_churn == 1 and score >= {relative_high_min_score_percent:g} and score < {high_min_score_percent:g}" if cutoffs.get("relative_fallback_enabled") and relative_high_min_score_percent is not None else None
+    cutoffs["high_rule"] = f"model_predicted_churn == 1 and score >= {high_min_score_percent:g}"
 
     snapshot_df["risk_percentile"] = percentiles.reindex(snapshot_df.index).round(4)
     snapshot_df["risk_zone"] = zones
@@ -386,6 +499,8 @@ def _risk_zone_label(value):
         return "Low Risk"
     if normalized in {"1", "medium", "med", "watchlist", "medium risk"}:
         return "Watchlist"
+    if normalized in {"highest available risk", "highest available", "relative high", "relatively elevated", "elevated"}:
+        return "Highest Available Risk"
     if normalized in {"2", "high", "high risk"}:
         return "High Risk"
     return str(value or "Unknown")
@@ -395,6 +510,8 @@ def _ai_recommended_action(risk_zone):
     zone = _risk_zone_label(risk_zone)
     if zone == "High Risk":
         return "Priority Outreach"
+    if zone == "Highest Available Risk":
+        return "Review Top-Ranked Risk"
     if zone == "Watchlist":
         return "Monitor Customer"
     if zone == "Low Risk":
@@ -427,9 +544,11 @@ def build_ai_behavior_charts_from_snapshot(snapshot_df, filters=None, feature_im
     filtered["risk_zone"] = filtered["risk_zone"].apply(_risk_zone_label)
     filtered["model_churn_probability"] = pd.to_numeric(filtered["model_churn_probability"], errors="coerce").fillna(0.0)
 
-    risk_order = ["Low Risk", "Watchlist", "High Risk"]
+    risk_order = RISK_ZONE_ORDER
     for zone in risk_order:
         customer_count = int((filtered["risk_zone"] == zone).sum())
+        if customer_count == 0:
+            continue
         charts["ai_predicted_risk_distribution"].append({
             "label": zone,
             "customer_count": customer_count,
@@ -461,7 +580,7 @@ def build_ai_behavior_charts_from_snapshot(snapshot_df, filters=None, feature_im
             return rows
         for label, group in filtered.groupby(column, dropna=False):
             customer_count = len(group)
-            high_count = int(sum(1 for value in group["risk_zone"] if _risk_zone_label(value) == "High Risk"))
+            high_count = int(sum(1 for value in group["risk_zone"] if _risk_zone_label(value) in {"High Risk", "Highest Available Risk"}))
             avg_risk = float(group["model_churn_probability"].mean() * 100) if customer_count else 0.0
             display_label = str(label) if pd.notna(label) else "Unknown"
             row = {
@@ -488,7 +607,7 @@ def build_ai_behavior_charts_from_snapshot(snapshot_df, filters=None, feature_im
         for category, group in filtered.groupby("primary_product_category", dropna=False):
             customer_count = len(group)
             exposure = (pd.to_numeric(group["total_revenue"], errors="coerce").fillna(0) * pd.to_numeric(group["model_churn_probability"], errors="coerce").fillna(0)).sum()
-            high_count = int(sum(1 for value in group["risk_zone"] if _risk_zone_label(value) == "High Risk"))
+            high_count = int(sum(1 for value in group["risk_zone"] if _risk_zone_label(value) in {"High Risk", "Highest Available Risk"}))
             display_label = str(category) if pd.notna(category) else "Unknown"
             revenue_rows.append({
                 "label": display_label,
@@ -546,9 +665,10 @@ def _validate_ai_behavior_snapshot(snapshot_df, charts):
         }
 
     label_columns = {"Churn", "actual_churn", "dashboard_churn_status"}
-    duplicate_count = int(snapshot_df["customer_name"].duplicated().sum()) if "customer_name" in snapshot_df else len(snapshot_df)
+    customer_key_col = "_customer_key" if "_customer_key" in snapshot_df else "customer_name"
+    duplicate_count = int(snapshot_df[customer_key_col].duplicated().sum()) if customer_key_col in snapshot_df else len(snapshot_df)
     row_count = int(len(snapshot_df))
-    unique_count = int(snapshot_df["customer_name"].nunique()) if "customer_name" in snapshot_df else 0
+    unique_count = int(snapshot_df[customer_key_col].nunique()) if customer_key_col in snapshot_df else 0
     risk_distribution_total = int(sum(item.get("customer_count", 0) for item in charts.get("ai_predicted_risk_distribution", [])))
     risk_score_bands_total = int(sum(item.get("customer_count", 0) for item in charts.get("risk_score_bands", [])))
     actual_label_columns_used = any(col in snapshot_df.columns for col in label_columns)
@@ -602,21 +722,69 @@ def build_customer_ai_behavior_snapshot(dataset_id, raw_df, customer_summary_df,
             print(f"⚠️ AI behavior snapshot cache ignored. Reason: {type(exc).__name__}: {str(exc)[:180]}")
 
     customer_model_table = churn_predictor._build_customer_model_table(raw_df, include_target=False)
-    model_cols = [
-        "customer_name",
-        "customer_ref_id",
-        "model_churn_probability",
-        "model_predicted_churn",
-    ]
-    model_output = customer_summary_df[[col for col in model_cols if col in customer_summary_df.columns]].copy()
-    snapshot_df = customer_model_table.merge(model_output, on="customer_name", how="left")
+    customer_lookup = pd.DataFrame()
+    if isinstance(customer_summary_df, pd.DataFrame) and not customer_summary_df.empty and "_customer_key" in customer_summary_df:
+        lookup_columns = ["_customer_key"]
+        for optional_column in ["customer_name", "customer_ref_id"]:
+            if optional_column in customer_summary_df:
+                lookup_columns.append(optional_column)
+        customer_lookup = (
+            customer_summary_df[lookup_columns]
+            .drop_duplicates("_customer_key")
+            .reset_index(drop=True)
+            .copy()
+        )
+    
+    if churn_predictor.is_trained and churn_predictor.model is not None:
+        predictions_df = churn_predictor._predict_customer_table_from_table(customer_model_table)
+        snapshot_df = customer_model_table.copy()
+        snapshot_df["model_churn_probability"] = predictions_df["model_churn_probability"].values
+        snapshot_df["model_predicted_churn"] = predictions_df["model_predicted_churn"].values
+        snapshot_df["model_risk_level"] = predictions_df["model_risk_level"].values
+    else:
+        predictions_df = churn_predictor._behavior_risk_predict(raw_df)
+        raw_df_copy = raw_df.copy()
+        raw_df_copy["_customer_key"] = churn_predictor._customer_keys(raw_df_copy).reset_index(drop=True)
+        predictions_df["_customer_key"] = raw_df_copy["_customer_key"].values
+        
+        prob_map = predictions_df.groupby("_customer_key")["model_churn_probability"].max()
+        pred_map = predictions_df.groupby("_customer_key")["model_predicted_churn"].max()
+        risk_map = predictions_df.groupby("_customer_key")["model_risk_level"].first()
+        
+        snapshot_df = customer_model_table.copy()
+        snapshot_df["model_churn_probability"] = snapshot_df["customer_name"].map(prob_map).fillna(0.0)
+        snapshot_df["model_predicted_churn"] = snapshot_df["customer_name"].map(pred_map).fillna(0).astype(int)
+        snapshot_df["model_risk_level"] = snapshot_df["customer_name"].map(risk_map).fillna("LOW")
 
+    snapshot_df["_customer_key"] = snapshot_df["customer_name"].astype(str)
+    if not customer_lookup.empty:
+        snapshot_df = snapshot_df.merge(
+            customer_lookup.rename(columns={
+                "customer_name": "customer_display_name",
+                "customer_ref_id": "customer_summary_ref_id",
+            }),
+            on="_customer_key",
+            how="left",
+        )
+        if "customer_display_name" in snapshot_df:
+            snapshot_df["customer_display_name"] = snapshot_df["customer_display_name"].fillna(snapshot_df["customer_name"])
+        if "customer_summary_ref_id" in snapshot_df:
+            if "customer_ref_id" in snapshot_df:
+                snapshot_df["customer_ref_id"] = snapshot_df["customer_summary_ref_id"].combine_first(snapshot_df["customer_ref_id"])
+            else:
+                snapshot_df["customer_ref_id"] = snapshot_df["customer_summary_ref_id"]
+            snapshot_df = snapshot_df.drop(columns=["customer_summary_ref_id"])
+    if "customer_display_name" not in snapshot_df:
+        snapshot_df["customer_display_name"] = snapshot_df["customer_name"]
     if "customer_ref_id" not in snapshot_df:
         snapshot_df["customer_ref_id"] = range(1, len(snapshot_df) + 1)
     snapshot_df["model_churn_probability"] = pd.to_numeric(snapshot_df["model_churn_probability"], errors="coerce").fillna(0.0)
     snapshot_df["model_predicted_churn"] = pd.to_numeric(snapshot_df["model_predicted_churn"], errors="coerce").fillna(0).astype(int)
     snapshot_df["risk_score_percent"] = (snapshot_df["model_churn_probability"] * 100).round(1)
-    snapshot_df, risk_zone_cutoffs = _assign_score_band_risk_zones(snapshot_df)
+    snapshot_df, risk_zone_cutoffs = _assign_score_band_risk_zones(
+        snapshot_df,
+        selected_threshold=getattr(churn_predictor, "selected_threshold", 0.5),
+    )
     snapshot_df["ai_churn_estimate"] = snapshot_df["risk_score_percent"]
     snapshot_df["ai_risk_zone"] = snapshot_df["risk_zone"]
     snapshot_df["ai_recommended_action"] = snapshot_df["ai_risk_zone"].apply(_ai_recommended_action)
@@ -624,7 +792,9 @@ def build_customer_ai_behavior_snapshot(dataset_id, raw_df, customer_summary_df,
     snapshot_df = _add_aov_band(snapshot_df)
 
     allowed_columns = [
+        "_customer_key",
         "customer_name",
+        "customer_display_name",
         "customer_ref_id",
         "total_orders",
         "total_revenue",
@@ -667,7 +837,7 @@ def build_customer_ai_behavior_snapshot(dataset_id, raw_df, customer_summary_df,
         "generated_at": datetime.now().isoformat(),
         "total_customers": validation["row_count"],
         "unique_customers": validation["unique_customer_count"],
-        "risk_zone_method": "score_band_50_83",
+        "risk_zone_method": "absolute_threshold_with_relative_fallback",
         "risk_zone_cutoffs": risk_zone_cutoffs,
         "snapshot_path": str(snapshot_path),
         "charts_path": str(charts_path),
@@ -704,7 +874,7 @@ def _print_churn_ai_evaluation(dataset_id, predictor, evaluation, label_message,
         print(f"Model Version: {evaluation.get('model_version', 'customer_rf_v3_rfm_threshold_cache')}")
         print("")
         print("Business KPI Source:")
-        print("Actual Churn labels aggregated by Customer Name")
+        print("AI model predictions aggregated by robust customer key")
         print("")
         print("Business KPIs:")
         print(f"Transactions: {summary['total_transactions']:,}")
@@ -712,6 +882,10 @@ def _print_churn_ai_evaluation(dataset_id, predictor, evaluation, label_message,
         print(f"Safe Customers: {summary['safe_customers']:,}")
         print(f"At-Risk Customers: {summary['at_risk_customers']:,}")
         print(f"Churn Risk: {summary['churn_risk_percentage']:.2f}%")
+        if summary.get("model_agreement_rate") is not None:
+            print(f"Model Agreement Rate: {float(summary['model_agreement_rate']):.2f}%")
+            print(f"Historical Safe Customers: {int(summary.get('historical_safe_customers') or 0):,}")
+            print(f"Historical At-Risk Customers: {int(summary.get('historical_at_risk_customers') or 0):,}")
         print("")
         print("AI Model:")
         print("Level: Customer-level")
@@ -733,7 +907,7 @@ def _print_churn_ai_evaluation(dataset_id, predictor, evaluation, label_message,
             print(f"Fallback Used: {'Yes' if evaluation.get('fallback_used') else 'No'}")
             print("")
             print("Target:")
-            print("actual_churn = max(Churn) per Customer Name")
+            print("actual_churn = max(Churn) per robust customer key")
             print("")
             print("Split:")
             print(f"Train Customers: {int(evaluation.get('train_size') or 0):,}")
@@ -821,8 +995,8 @@ def _print_churn_ai_evaluation(dataset_id, predictor, evaluation, label_message,
         print(f"Accuracy is {pct(evaluation.get('accuracy'))}, but all-safe baseline is {pct(evaluation.get('all_safe_accuracy'))}. Use recall, F1, balanced accuracy, ROC-AUC, and feature signals to explain model quality honestly.")
         print("")
         print("Important:")
-        print("Dashboard KPIs use actual labels.")
-        print("AI predictions are evaluated separately.")
+        print("Dashboard KPIs use AI model predictions.")
+        print("Historical labels remain visible for comparison when available.")
         print("===========================================================")
         return
 
@@ -950,6 +1124,7 @@ def predict_churn():
             merged_df["model_churn_probability"] = merged_df["churn_probability"]
         if "model_predicted_churn" not in merged_df and "churn_prediction" in merged_df:
             merged_df["model_predicted_churn"] = merged_df["churn_prediction"]
+        merged_df["_customer_key"] = predictor._customer_keys(merged_df).reset_index(drop=True)
         t_merge = time.perf_counter()
         print(f"[CHURN TIMING] merge predictions: {t_merge - t_pred:.4f} sec")
 
@@ -1059,8 +1234,13 @@ def predict_churn():
     )
     t_ai_snapshot = time.perf_counter()
     print(f"[CHURN TIMING] AI behavior snapshot/cache: {t_ai_snapshot - t_build:.4f} sec")
+    risk_zone_counts = ai_behavior_snapshot_df.get("risk_zone", pd.Series(dtype=str)).apply(_risk_zone_label).value_counts().to_dict()
+    risk_zone_options = [
+        zone for zone in RISK_ZONE_ORDER
+        if risk_zone_counts.get(zone, 0) > 0
+    ]
     ai_filter_options = {
-        "risk_zones": ["Low Risk", "Watchlist", "High Risk"],
+        "risk_zones": risk_zone_options,
         "categories": sorted(ai_behavior_snapshot_df.get("primary_product_category", pd.Series(dtype=str)).dropna().astype(str).unique().tolist()),
         "payment_methods": sorted(ai_behavior_snapshot_df.get("primary_payment_method", pd.Series(dtype=str)).dropna().astype(str).unique().tolist()),
         "recency_buckets": ["0-30 days", "31-60 days", "61-90 days", "91-180 days", "180+ days"],
@@ -1070,16 +1250,18 @@ def predict_churn():
         behavior_columns_available
         and ai_behavior_validation.get("valid")
         and not ai_behavior_snapshot_df.empty
-        and {"customer_name", "ai_churn_estimate", "ai_risk_zone", "ai_recommended_action"}.issubset(set(ai_behavior_snapshot_df.columns))
+        and {"_customer_key", "ai_churn_estimate", "ai_risk_zone", "ai_recommended_action"}.issubset(set(ai_behavior_snapshot_df.columns))
     )
     if can_show_ai_risk:
-        ai_customer_fields = ai_behavior_snapshot_df[["customer_name", "ai_churn_estimate", "ai_risk_zone", "ai_recommended_action"]].copy()
+        customer_summary_df = customer_summary_df.reset_index(drop=True)
+        ai_customer_fields = ai_behavior_snapshot_df[["_customer_key", "ai_churn_estimate", "ai_risk_zone", "ai_recommended_action"]].copy()
+        ai_customer_fields = ai_customer_fields.reset_index(drop=True)
         ai_customer_fields["ai_churn_estimate"] = pd.to_numeric(ai_customer_fields["ai_churn_estimate"], errors="coerce").round(1)
         ai_customer_fields["ai_risk_zone"] = ai_customer_fields["ai_risk_zone"].apply(_risk_zone_label)
         ai_customer_fields["ai_recommended_action"] = ai_customer_fields["ai_risk_zone"].apply(_ai_recommended_action)
         customer_summary_df = customer_summary_df.merge(
             ai_customer_fields,
-            on="customer_name",
+            on="_customer_key",
             how="left",
         )
     else:
@@ -1089,6 +1271,10 @@ def predict_churn():
 
     # Historical chart data is built with the dashboard payload and cached for repeat loads.
     ai_snapshot_response_columns = [
+        "_customer_key",
+        "customer_name",
+        "customer_display_name",
+        "customer_ref_id",
         "risk_zone",
         "risk_score_percent",
         "primary_product_category",

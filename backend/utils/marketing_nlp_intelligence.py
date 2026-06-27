@@ -23,7 +23,7 @@ import pandas as pd
 from sklearn.feature_extraction.text import TfidfVectorizer
 
 
-NLP_PIPELINE_VERSION = "marketing_nlp_feedback_v4_mixed_signal_theme_polish"
+NLP_PIPELINE_VERSION = "marketing_nlp_feedback_v5_neutral_sentiment_fallback"
 ROBERTA_MODEL_NAME = "cardiffnlp/twitter-roberta-base-sentiment-latest"
 XLMR_MODEL_NAME = "cardiffnlp/twitter-xlm-roberta-base-sentiment"
 SBERT_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
@@ -572,7 +572,8 @@ def _aspect_sentiment(text: str, runtime: _NLPRuntime) -> tuple[dict[str, str], 
     positive = [aspect for aspect, label in aspect_map.items() if label == "Positive"]
     negative = [aspect for aspect, label in aspect_map.items() if label == "Negative"]
     mixed = [aspect for aspect, label in aspect_map.items() if label == "Mixed"]
-    top_positive = positive[0] if positive else None
+    neutral = [aspect for aspect, label in aspect_map.items() if label == "Neutral"]
+    top_positive = positive[0] if positive else neutral[0] if neutral else None
     top_negative = negative[0] if negative else mixed[0] if mixed else None
     return aspect_map, top_positive, top_negative
 
@@ -751,6 +752,15 @@ def _process_records(source_df: pd.DataFrame, dataset_id: str) -> tuple[list[dic
         if "Positive" in aspect_labels and "Negative" in aspect_labels:
             label = "Mixed"
         sarcasm_flag, sarcasm_reason = _sarcasm_signal(clean_text, label, top_negative)
+        if top_positive is None and top_negative is None:
+            if label == "Positive":
+                top_positive = "Overall Experience"
+            elif label == "Negative":
+                top_negative = "General Complaint"
+            elif label == "Mixed":
+                top_negative = "General Feedback"
+            else:
+                top_positive = "General Feedback"
         k_themes = runtime.extract_keyphrases(clean_text)
         k_used = bool(k_themes)
         themes = _canonicalize_themes(k_themes or _themes_for_text(clean_text, aspects), clean_text)

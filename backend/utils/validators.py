@@ -4,19 +4,17 @@ from utils.error_handlers import APIError
 def validate_dataset_columns(df: pd.DataFrame, dataset_type: str = 'general'):
     """
     Validates that the provided DataFrame contains the required columns
-    based on the dataset_type.
+    based on the dataset_type using classifier confidence.
     """
-    REQUIRED_COLUMNS = {
-        'churn': ['Churn'],
-        'marketing': ['Income', 'Recency'],
-        'inventory': ['Quantity'],
-        'general': []
-    }
+    from utils.dataset_classifier import classify_dataset
+    classification = classify_dataset(df)
+    winning_module = classification.get('winning_module', classification['dataset_type'])
     
-    required = REQUIRED_COLUMNS.get(dataset_type, [])
-    missing = [c for c in required if c not in df.columns]
-    
-    if missing:
-        raise APIError(f"Missing required columns for {dataset_type}: {missing}", 400)
+    if winning_module == 'general':
+        raise APIError(
+            "Dataset validation failed. Could not classify the dataset into any analysis module. "
+            "Confidence score too low across all modules.",
+            400
+        )
     
     return True

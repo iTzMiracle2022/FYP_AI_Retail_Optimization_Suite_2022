@@ -52,3 +52,20 @@ def verify_google_token(token_id):
     except ValueError:
         # Invalid token
         return None
+
+def generate_auth_token(email, role):
+    """Generate a JWT token representing the user's active session."""
+    payload = {
+        'email': email,
+        'role': role,
+        'exp': datetime.utcnow() + timedelta(hours=2) # 2 hours session expiry
+    }
+    return jwt.encode(payload, config.SECRET_KEY, algorithm='HS256')
+
+def verify_auth_token(token):
+    """Decode and verify a JWT session auth token."""
+    try:
+        return jwt.decode(token, config.SECRET_KEY, algorithms=['HS256'])
+    except (jwt.ExpiredSignatureError, jwt.InvalidTokenError):
+        return None
+

@@ -1,7 +1,8 @@
 from flask import Blueprint, jsonify, request, url_for
 from datetime import datetime, timezone
 from database.mongodb_helper import db
-from utils.auth_utils import hash_password, check_password, generate_token, verify_token, verify_google_token
+from utils.auth_utils import hash_password, check_password, generate_token, verify_token, verify_google_token, generate_auth_token
+from utils.audit_logger import log_activity
 from flask_mail import Message
 from extensions import mail
 from config import config
@@ -77,25 +78,46 @@ def verify_email(token):
 @user_bp.route('/login', methods=['POST'])
 def login():
     """Authenticate with email and password."""
-    data = request.json
+    data = request.json or {}
     email = data.get('email')
     password = data.get('password')
 
     user = db.get_user(email)
     if not user:
+        log_activity(email, "anonymous", "auth.login", status="FAILED", details={"reason": "User not found"})
         return jsonify({'success': False, 'message': 'User not found'}), 404
     
     if not user.get('password_hash'):
+        log_activity(email, user.get('role', 'Customer'), "auth.login", status="FAILED", details={"reason": "Account not activated"})
         return jsonify({'success': False, 'message': 'Account not activated. Please complete registration.'}), 401
 
     if not user.get('is_verified'):
+        log_activity(email, user.get('role', 'Customer'), "auth.login", status="FAILED", details={"reason": "Email not verified"})
         return jsonify({'success': False, 'message': 'Email not verified. Please check your inbox to activate your account.'}), 401
 
     if check_password(password, user.get('password_hash')):
         # Update last login (UTC Aware)
         db.users.update_one({'email': email}, {'$set': {'last_login': datetime.now(timezone.utc)}})
-        return jsonify({'success': True, 'user': user})
+        
+        # Log success
+        user_role = user.get('role', 'Customer')
+        log_activity(email, user_role, "auth.login", status="SUCCESS")
+        
+        # Generate token and set HTTP-only cookie
+        token = generate_auth_token(email, user_role)
+        is_secure = not config.DEBUG
+        
+        response = jsonify({'success': True, 'user': user})
+        response.set_cookie(
+            'auth_token',
+            token,
+            httponly=True,
+            secure=is_secure,
+            samesite='Lax'
+        )
+        return response
     
+    log_activity(email, user.get('role', 'Customer'), "auth.login", status="FAILED", details={"reason": "Invalid password"})
     return jsonify({'success': False, 'message': 'Invalid password'}), 401
 
 @user_bp.route('/google-login', methods=['POST'])
@@ -105,6 +127,7 @@ def google_login():
     user_info = verify_google_token(token_id)
     
     if not user_info:
+        log_activity("unknown", "anonymous", "auth.google_login", status="FAILED", details={"reason": "Invalid Google Token"})
         return jsonify({'success': False, 'message': 'Invalid Google Token'}), 401
     
     email = user_info['email']
@@ -130,6 +153,7 @@ def google_login():
 
     # Check if verified (unless it's the first time and requires setup)
     if not user.get('is_verified'):
+        log_activity(email, user.get('role', 'Customer'), "auth.google_login", status="FAILED", details={"reason": "Email not verified"})
         return jsonify({
             'success': False, 
             'message': 'Email not verified. Please check your inbox to activate your account.',
@@ -139,7 +163,36 @@ def google_login():
     # Update last login and return full user
     db.users.update_one({'email': email}, {'$set': {'last_login': datetime.now(timezone.utc)}})
     user = db.get_user(email)
-    return jsonify({'success': True, 'user': user})
+    
+    # Log success
+    user_role = user.get('role', 'Customer')
+    log_activity(email, user_role, "auth.google_login", status="SUCCESS")
+    
+    # Generate token and set HTTP-only cookie
+    token = generate_auth_token(email, user_role)
+    is_secure = not config.DEBUG
+    
+    response = jsonify({'success': True, 'user': user})
+    response.set_cookie(
+        'auth_token',
+        token,
+        httponly=True,
+        secure=is_secure,
+        samesite='Lax'
+    )
+    return response
+
+@user_bp.route('/logout', methods=['POST'])
+def logout():
+    """Invalidate session and clear secure cookies."""
+    user_email = request.headers.get('X-User-Email')
+    user_role = request.headers.get('X-User-Role')
+    
+    log_activity(user_email, user_role, "auth.logout", status="SUCCESS")
+    
+    response = jsonify({'success': True, 'message': 'Logged out successfully'})
+    response.delete_cookie('auth_token')
+    return response
 
 @user_bp.route('/google-setup', methods=['POST'])
 def google_setup():

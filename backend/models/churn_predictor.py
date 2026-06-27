@@ -39,7 +39,7 @@ except ImportError:
     print("ℹ️ RAPIDS not found. Falling back to CPU (Scikit-Learn).")
 
 
-CHURN_MODEL_VERSION = "customer_rf_v3_rfm_threshold_cache"
+CHURN_MODEL_VERSION = "customer_rf_v6_dedup_age"
 
 
 class ChurnPredictor:
@@ -65,7 +65,6 @@ class ChurnPredictor:
         "avg_days_between_orders",
         "unique_categories",
         "unique_payment_methods",
-        "avg_customer_age",
         "avg_age",
         "last_purchase_month",
         "last_purchase_dayofweek",
@@ -116,6 +115,8 @@ class ChurnPredictor:
     ]
 
     MODEL_INPUT_FEATURES = NUMERIC_FEATURES + CATEGORICAL_FEATURES
+    OPTIONAL_NUMERIC_FEATURES = ["avg_customer_age"]
+    AGE_DEDUP_CORRELATION_THRESHOLD = 0.99
 
     EXCLUDED_FEATURES = {
         "Churn",
@@ -159,6 +160,8 @@ class ChurnPredictor:
         self.can_evaluate_model = False
         self.label_message = ""
         self.features_used = []
+        self.semantic_numeric_features = list(self.NUMERIC_FEATURES)
+        self.semantic_categorical_features = list(self.CATEGORICAL_FEATURES)
         self.semantic_features_used = list(self.MODEL_INPUT_FEATURES)
         self.model_feature_columns = []
         self.selected_threshold = 0.5
@@ -167,6 +170,8 @@ class ChurnPredictor:
         self.cache_dir = Path(__file__).resolve().parents[1] / "cache" / "churn_model"
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.cache_metadata = {}
+        self.grouping_strategy = {}
+        self.age_feature_deduplication = {}
 
     def _short_error(self, exc: Exception) -> str:
         return f"{type(exc).__name__}: {str(exc).splitlines()[0][:240]}"
@@ -225,10 +230,13 @@ class ChurnPredictor:
                 return False
             if metadata.get("model_version") != CHURN_MODEL_VERSION:
                 return False
-            if metadata.get("semantic_feature_schema") != self.MODEL_INPUT_FEATURES:
+            if metadata.get("semantic_feature_schema") != self.semantic_features_used:
                 return False
 
             self.model = joblib.load(model_path)
+            self.semantic_features_used = metadata.get("semantic_feature_schema") or list(self.semantic_features_used)
+            self.semantic_numeric_features = metadata.get("numeric_feature_schema") or list(self.semantic_numeric_features)
+            self.semantic_categorical_features = metadata.get("categorical_feature_schema") or list(self.semantic_categorical_features)
             self.selected_threshold = float(metadata["selected_threshold"])
             self.selected_model_config = metadata.get("selected_model_config") or {}
             self.model_feature_columns = metadata.get("model_feature_columns") or []
@@ -247,10 +255,12 @@ class ChurnPredictor:
                 self.evaluation["gpu_used_for_this_evaluation"] = False
             self.accuracy = self.evaluation.get("accuracy") if self.evaluation else None
             self.model_backend = metadata.get("model_backend", "sklearn_cpu")
+            self.grouping_strategy = metadata.get("grouping_strategy") or {}
             self.gpu_used = False
             self.using_gpu = False
             self.fallback_used = False
             self.cache_metadata = metadata
+            self.age_feature_deduplication = metadata.get("age_feature_deduplication") or {}
             print("✅ Loaded cached customer-level Churn AI model")
             print(f"Model Version: {CHURN_MODEL_VERSION}")
             print("Tuning Skipped: Yes")
@@ -267,12 +277,19 @@ class ChurnPredictor:
             "dataset_hash": dataset_hash,
             "model_version": CHURN_MODEL_VERSION,
             "model_backend": self.model_backend,
-            "semantic_feature_schema": self.MODEL_INPUT_FEATURES,
+            "semantic_feature_schema": self.semantic_features_used,
+            "numeric_feature_schema": self.semantic_numeric_features,
+            "categorical_feature_schema": self.semantic_categorical_features,
             "model_feature_columns": self.model_feature_columns,
             "selected_threshold": self.selected_threshold,
             "selected_model_config": self.selected_model_config,
             "feature_importance": self.feature_importance,
             "ai_model_evaluation": self.evaluation,
+            "grouping_strategy": getattr(self, "grouping_strategy", {}),
+            "age_feature_deduplication": getattr(self, "age_feature_deduplication", {}),
+            "train_splits_used": getattr(self, "train_splits_used", "train_validation"),
+            "train_rows_count": getattr(self, "train_rows_count", None),
+            "test_rows_held_out": getattr(self, "test_rows_held_out", None),
             "created_at": datetime.now().isoformat(),
         }
         joblib.dump(self.model, model_path)
@@ -288,15 +305,121 @@ class ChurnPredictor:
         modes = values.mode()
         return str(modes.iloc[0]) if not modes.empty else str(values.iloc[0])
 
+    def _determine_grouping_strategy(self, df: pd.DataFrame) -> dict:
+        from utils.data_preprocessing import ColumnMatcher
+        
+        # 1. Look for Customer ID column
+        id_col = ColumnMatcher.match(df, 'customer')
+        if not id_col and "Customer ID" in df.columns:
+            id_col = "Customer ID"
+            
+        has_name = "Customer Name" in df.columns
+        
+        # Check reliability of Customer ID
+        id_is_unreliable = False
+        if id_col and has_name:
+            total_rows = len(df)
+            if total_rows > 10:
+                unique_ids = df[id_col].nunique()
+                mean_ids_per_name = df.groupby("Customer Name")[id_col].nunique().mean()
+                if unique_ids > 0.9 * total_rows and mean_ids_per_name > 2.0:
+                    id_is_unreliable = True
+                    print(f"⚠️ ChurnPredictor: Detected row-level/unreliable Customer ID column '{id_col}'. falling back to composite grouping.")
+        
+        if id_col and not id_is_unreliable:
+            return {
+                "strategy": "id_based",
+                "key_column": id_col
+            }
+            
+        if has_name:
+            # Check for demographic columns consistency
+            consistent_demographics = []
+            for col in ["Age", "Customer Age", "Gender"]:
+                if col in df.columns:
+                    name_counts = df["Customer Name"].value_counts()
+                    multi_row_names = name_counts[name_counts > 1].index
+                    if len(multi_row_names) > 0:
+                        uniques_per_name = df[df["Customer Name"].isin(multi_row_names)].groupby("Customer Name")[col].nunique()
+                        pct_consistent = (uniques_per_name <= 1).mean()
+                        if pct_consistent >= 0.75:
+                            consistent_demographics.append(col)
+                    else:
+                        consistent_demographics.append(col)
+            
+            return {
+                "strategy": "composite_based",
+                "key_columns": ["Customer Name"] + consistent_demographics
+            }
+            
+        return {
+            "strategy": "row_fallback"
+        }
+
     def _customer_keys(self, df: pd.DataFrame) -> pd.Series:
-        if "Customer Name" in df.columns:
-            return df["Customer Name"].fillna("Unknown Customer").astype(str)
-        return pd.Series([f"row_{i}" for i in range(len(df))], index=df.index)
+        # Determine strategy dynamically if not pre-determined or if dataset is large enough for fresh detection
+        strategy_info = getattr(self, "grouping_strategy", {})
+        
+        # If the df is large enough, always attempt fresh re-detection
+        if len(df) >= 10:
+            strategy_info = self._determine_grouping_strategy(df)
+            # Log it in predictor instance for current prediction run
+            self.grouping_strategy = strategy_info
+        elif not strategy_info:
+            # Inconclusive/small df and no pre-loaded strategy, do fresh detection
+            strategy_info = self._determine_grouping_strategy(df)
+            self.grouping_strategy = strategy_info
+            
+        strategy = strategy_info.get("strategy", "row_fallback")
+        
+        if strategy == "id_based":
+            col = strategy_info["key_column"]
+            return df[col].fillna("Unknown").astype(str)
+        elif strategy == "composite_based":
+            cols = strategy_info["key_columns"]
+            temp_df = df[cols].copy()
+            for col in cols:
+                temp_df[col] = temp_df[col].fillna("Unknown").astype(str)
+            return temp_df.agg("_".join, axis=1)
+        else:
+            return pd.Series([f"row_{i}" for i in range(len(df))], index=df.index)
 
     def _numeric_series(self, df: pd.DataFrame, column: str, default=0.0) -> pd.Series:
         if column in df.columns:
             return pd.to_numeric(df[column], errors="coerce")
         return pd.Series([default] * len(df), index=df.index, dtype=float)
+
+    def _age_features_are_redundant(self, avg_age: pd.Series, avg_customer_age: pd.Series) -> tuple[bool, float | None, int]:
+        paired = pd.DataFrame({
+            "avg_age": pd.to_numeric(avg_age, errors="coerce"),
+            "avg_customer_age": pd.to_numeric(avg_customer_age, errors="coerce"),
+        }).dropna()
+        valid_pairs = len(paired)
+        if valid_pairs == 0:
+            return True, None, valid_pairs
+
+        age_values = paired["avg_age"].astype(float).to_numpy()
+        customer_age_values = paired["avg_customer_age"].astype(float).to_numpy()
+        if np.allclose(age_values, customer_age_values, rtol=1e-6, atol=1e-6):
+            return True, 1.0, valid_pairs
+
+        if valid_pairs < 2 or np.isclose(np.std(age_values), 0.0) or np.isclose(np.std(customer_age_values), 0.0):
+            return False, None, valid_pairs
+
+        correlation = float(np.corrcoef(age_values, customer_age_values)[0, 1])
+        if np.isnan(correlation):
+            return False, None, valid_pairs
+        return correlation > self.AGE_DEDUP_CORRELATION_THRESHOLD, correlation, valid_pairs
+
+    def _set_age_aware_feature_schema(self, include_customer_age: bool):
+        numeric_features = list(self.NUMERIC_FEATURES)
+        if include_customer_age and "avg_customer_age" not in numeric_features:
+            avg_age_index = numeric_features.index("avg_age") if "avg_age" in numeric_features else len(numeric_features)
+            numeric_features.insert(avg_age_index, "avg_customer_age")
+
+        self.semantic_numeric_features = numeric_features
+        self.semantic_categorical_features = list(self.CATEGORICAL_FEATURES)
+        self.semantic_features_used = self.semantic_numeric_features + self.semantic_categorical_features
 
     def _build_customer_model_table(self, df: pd.DataFrame, include_target: bool) -> pd.DataFrame:
         work = df.copy().reset_index(drop=True)
@@ -305,9 +428,13 @@ class ChurnPredictor:
         work["_amount"] = self._numeric_series(work, "Total Purchase Amount").fillna(0.0)
         work["_quantity"] = self._numeric_series(work, "Quantity").fillna(0.0)
         work["_product_price"] = self._numeric_series(work, "Product Price").fillna(0.0)
-        work["_returns"] = self._numeric_series(work, "Returns").fillna(0.0)
-        work["_customer_age"] = self._numeric_series(work, "Customer Age", np.nan)
+        raw_returns = self._numeric_series(work, "Returns", default=np.nan)
+        work["_returns"] = raw_returns.fillna(0.0)
+        work["_known_return_orders"] = raw_returns.notna().astype(float)
+        has_age = "Age" in work.columns
+        has_customer_age = "Customer Age" in work.columns
         work["_age"] = self._numeric_series(work, "Age", np.nan)
+        work["_customer_age"] = self._numeric_series(work, "Customer Age", np.nan)
 
         grouped = work.groupby("_customer_key", dropna=False)
         table = pd.DataFrame(index=grouped.size().index)
@@ -318,7 +445,8 @@ class ChurnPredictor:
         table["avg_quantity"] = grouped["_quantity"].mean().astype(float)
         table["avg_product_price"] = grouped["_product_price"].mean().astype(float)
         table["total_returns"] = grouped["_returns"].sum().astype(float)
-        table["return_rate"] = table["total_returns"] / table["total_orders"].replace(0, 1)
+        table["known_return_orders"] = grouped["_known_return_orders"].sum().astype(float)
+        table["return_rate"] = table["total_returns"] / table["known_return_orders"].replace(0, np.nan)
 
         first_purchase = grouped["_purchase_date"].min()
         last_purchase = grouped["_purchase_date"].max()
@@ -437,8 +565,37 @@ class ChurnPredictor:
             table["customer_lifetime_days"] + table["days_since_last_purchase"] + 1
         ).replace(0, 1)
 
-        table["avg_customer_age"] = grouped["_customer_age"].mean()
-        table["avg_age"] = grouped["_age"].mean()
+        avg_age_candidate = grouped["_age"].mean()
+        avg_customer_age_candidate = grouped["_customer_age"].mean()
+        table["avg_age"] = avg_age_candidate if has_age else avg_customer_age_candidate
+        include_customer_age_feature = False
+        age_dedup_reason = "single_or_missing_age_source"
+        age_correlation = None
+        age_valid_pairs = 0
+        if has_age and has_customer_age:
+            is_redundant, age_correlation, age_valid_pairs = self._age_features_are_redundant(
+                avg_age_candidate,
+                avg_customer_age_candidate,
+            )
+            include_customer_age_feature = not is_redundant
+            if include_customer_age_feature:
+                table["avg_customer_age"] = avg_customer_age_candidate
+                age_dedup_reason = "age_sources_meaningfully_differ"
+            else:
+                age_dedup_reason = "age_sources_redundant"
+
+        self.age_feature_deduplication = {
+            "age_column_present": bool(has_age),
+            "customer_age_column_present": bool(has_customer_age),
+            "kept_features": ["avg_age"] + (["avg_customer_age"] if include_customer_age_feature else []),
+            "dropped_features": [] if include_customer_age_feature else (["avg_customer_age"] if has_customer_age else []),
+            "preferred_feature": "avg_age",
+            "correlation_threshold": float(self.AGE_DEDUP_CORRELATION_THRESHOLD),
+            "observed_correlation": age_correlation,
+            "valid_pair_count": int(age_valid_pairs),
+            "reason": age_dedup_reason,
+        }
+        self._set_age_aware_feature_schema(include_customer_age=include_customer_age_feature)
         if "Gender" in work.columns:
             gender_counts = work.dropna(subset=["Gender"]).groupby(["_customer_key", "Gender"]).size().rename("count").reset_index()
             if gender_counts.empty:
@@ -478,25 +635,28 @@ class ChurnPredictor:
             table["actual_churn"] = churn.groupby(work["_customer_key"]).max().reindex(table.index).fillna(0).astype(int)
 
         table = table.reset_index(drop=True)
-        for col in self.NUMERIC_FEATURES:
-            table[col] = pd.to_numeric(table.get(col, 0.0), errors="coerce").fillna(0.0).astype(float)
-        for col in self.CATEGORICAL_FEATURES:
+        for col in self.semantic_numeric_features:
+            if col == "return_rate":
+                table[col] = pd.to_numeric(table.get(col, np.nan), errors="coerce").astype(float)
+            else:
+                table[col] = pd.to_numeric(table.get(col, 0.0), errors="coerce").fillna(0.0).astype(float)
+        for col in self.semantic_categorical_features:
             table[col] = table.get(col, "Unknown")
             table[col] = table[col].fillna("Unknown").astype(str)
         return table
 
     def _raw_customer_features(self, customer_table: pd.DataFrame) -> pd.DataFrame:
-        features = customer_table[self.MODEL_INPUT_FEATURES].copy()
+        features = customer_table[self.semantic_features_used].copy()
         return features.drop(columns=[c for c in self.EXCLUDED_FEATURES if c in features.columns], errors="ignore")
 
     def _encode_customer_features(self, raw_features: pd.DataFrame, fit: bool) -> pd.DataFrame:
         encoded = raw_features.copy()
-        for col in self.NUMERIC_FEATURES:
+        for col in self.semantic_numeric_features:
             encoded[col] = pd.to_numeric(encoded.get(col, 0.0), errors="coerce").fillna(0.0)
-        for col in self.CATEGORICAL_FEATURES:
+        for col in self.semantic_categorical_features:
             encoded[col] = encoded.get(col, "Unknown").fillna("Unknown").astype(str)
 
-        encoded = pd.get_dummies(encoded, columns=self.CATEGORICAL_FEATURES, prefix=self.CATEGORICAL_FEATURES)
+        encoded = pd.get_dummies(encoded, columns=self.semantic_categorical_features, prefix=self.semantic_categorical_features)
         encoded = encoded.astype(np.float32)
 
         if fit:
@@ -972,9 +1132,9 @@ class ChurnPredictor:
         self.model_backend = "sklearn_cpu"
         self.last_error = None
         dataset_hash = self._dataset_hash(df)
+        customer_table = self._build_customer_model_table(df, include_target=True)
 
         if self._load_cached_model(dataset_id, dataset_hash, force_retune=force_retune):
-            customer_table = self._build_customer_model_table(df, include_target=True)
             self.last_customer_predictions = self._predict_customer_table_from_table(customer_table)
             self.is_trained = True
             self.churn_mode = "labeled"
@@ -989,7 +1149,6 @@ class ChurnPredictor:
         print("Tuning Backend: sklearn CPU")
         print("Reason: sklearn supports class_weight, feature importance, and controlled validation tuning.")
 
-        customer_table = self._build_customer_model_table(df, include_target=True)
         y = customer_table["actual_churn"].astype(int)
         if y.nunique() < 2:
             raise ValueError("Customer-level Churn target must contain both classes for supervised evaluation.")
@@ -1048,9 +1207,16 @@ class ChurnPredictor:
         )
         self.accuracy = self.evaluation["accuracy"]
 
-        X_all = self._encode_customer_features(self._raw_customer_features(customer_table), fit=True)
-        y_all = customer_table["actual_churn"].astype(int)
-        self.model = self._fit_cpu_model_with_config(X_all, y_all, self.selected_model_config)
+        # Refit final model on train_validation ONLY (80% of data, excluding held-out Test split)
+        X_train_val = self._encode_customer_features(self._raw_customer_features(train_validation), fit=True)
+        y_train_val = train_validation["actual_churn"].astype(int)
+        self.model = self._fit_cpu_model_with_config(X_train_val, y_train_val, self.selected_model_config)
+
+        # Track audit data
+        self.train_splits_used = "train_validation"
+        self.train_rows_count = len(train_validation)
+        self.test_rows_held_out = len(test)
+
         self.gpu_used = False
         self.using_gpu = False
         self.model_backend = "sklearn_cpu"
@@ -1060,7 +1226,10 @@ class ChurnPredictor:
             self.evaluation["gpu_used"] = bool(self.gpu_used)
             self.evaluation["fallback_used"] = bool(self.fallback_used)
 
-        self._set_feature_importance(X_all)
+        self._set_feature_importance(X_train_val)
+
+        # Use fit=False to encode full table for dashboard predictions (ensures test split rows get prediction scores)
+        X_all = self._encode_customer_features(self._raw_customer_features(customer_table), fit=False)
         all_probabilities = self._predict_probabilities(self.model, X_all, use_gpu=self.using_gpu)
         self.last_customer_predictions = self._customer_prediction_frame(customer_table, all_probabilities)
         self._save_cached_model(dataset_id, dataset_hash)
