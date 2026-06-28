@@ -25,8 +25,25 @@ def analyze_sales_trends():
 
     # Load dataset (Isolated)
     requester_role = request.headers.get('X-User-Role')
-    dataset_owner_email = None if requester_role and requester_role.lower() in ['manager', 'system admin'] else user_email
+    dataset_owner_email = None if requester_role and requester_role.lower() in ['manager', 'system admin', 'analyst', 'viewer'] else user_email
     db.get_dataset_info(dataset_id, dataset_owner_email)
+
+    if requester_role == 'Viewer':
+        existing_report = db.reports.find_one({'dataset_id': dataset_id, 'report_type': 'sales'})
+        if existing_report:
+            return jsonify({
+                'success': True,
+                'dataset_id': dataset_id,
+                'user_email': user_email,
+                'kpis': existing_report.get('kpis'),
+                'charts': existing_report.get('charts'),
+                'tables': existing_report.get('tables', {}),
+                'category_filter': category_filter,
+                'time_period': time_period
+            }), 200
+        else:
+            return jsonify({'success': False, 'message': 'Unauthorized. Viewers cannot trigger fresh sales trend analysis.'}), 403
+
     df = loader.load_csv(dataset_id)
 
     # Run sales trend analysis
@@ -41,7 +58,14 @@ def analyze_sales_trends():
             raise APIError(str(e), 400)
 
     # Log to MongoDB (Isolated)
-    db._save_report(dataset_id, 'sales', user_email=user_email, kpis=results['kpis'], category_breakdown=results['charts']['revenue_by_category'])
+    db._save_report(
+        dataset_id, 
+        'sales', 
+        user_email=user_email, 
+        kpis=results['kpis'], 
+        category_breakdown=results['charts']['revenue_by_category'],
+        charts=results['charts']
+    )
     db.update_dataset_status(dataset_id, 'analyzed', user_email=user_email)
 
     return jsonify({

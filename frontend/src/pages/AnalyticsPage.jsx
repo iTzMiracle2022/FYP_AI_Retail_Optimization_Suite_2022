@@ -130,7 +130,19 @@ const AnalyticsPage = () => {
       <ErrorMessage message={error} />
 
       <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'flex-start', minHeight: '60vh', marginTop: '1rem' }}>
-        <div className="premium-card" style={{ maxWidth: '850px', width: '100%' }}>
+        <div style={{
+          maxWidth: '850px', width: '100%',
+          padding: '1.75rem', borderRadius: '24px', background: 'var(--bg-card)',
+          border: '1px solid var(--border)', boxShadow: '0 4px 24px rgba(15, 23, 42, 0.05)',
+          transition: 'border-color 0.2s'
+        }}
+          onMouseEnter={e => {
+            e.currentTarget.style.borderColor = '#000000';
+          }}
+          onMouseLeave={e => {
+            e.currentTarget.style.borderColor = 'var(--border)';
+          }}
+        >
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem' }}>
             <h3 style={{ fontSize: '1.25rem', fontWeight: 800, color: 'var(--text-main)', fontFamily: "'Manrope', sans-serif" }}>Available Reports</h3>
             <div style={{ display: 'flex', gap: '8px' }}>
@@ -152,14 +164,12 @@ const AnalyticsPage = () => {
               }}
               onMouseEnter={e => {
                 if (report.isReady) {
-                  e.currentTarget.style.borderColor = '#2563EB';
-                  e.currentTarget.style.boxShadow = '0 4px 12px rgba(37, 99, 235, 0.08)';
+                  e.currentTarget.style.borderColor = '#000000';
                 }
               }}
               onMouseLeave={e => {
                 if (report.isReady) {
-                  e.currentTarget.style.borderColor = 'var(--border)';
-                  e.currentTarget.style.boxShadow = 'none';
+                  e.currentTarget.style.borderColor = report.isReady ? 'var(--border)' : '#E2E8F0';
                 }
               }}
               >

@@ -52,6 +52,12 @@ def health_check():
 @handle_errors
 def get_analytics_stats():
     """Get all audit logs from ER Diagram collections (Isolated by user_email)"""
+    if not config.DEBUG:
+        return jsonify({
+            'success': False,
+            'message': 'Unauthorized. Developer diagnostics are only accessible in development mode.'
+        }), 403
+        
     from flask import request
     user_email = request.args.get('email')
     requester_role = request.headers.get('X-User-Role')
@@ -81,7 +87,28 @@ def get_dashboard_summary():
     rev_freq = request.args.get('rev_freq', 'daily')
     act_days = request.args.get('act_days')
     
-    if requester_role in ['Manager', 'System Admin']:
+    if requester_role in ['Manager', 'System Admin', 'Analyst', 'Viewer']:
         user_email = None
         
     return jsonify(db.get_dashboard_summary(user_email, rev_days=rev_days, act_days=act_days, rev_freq=rev_freq)), 200
+
+@system_bp.route('/audit-logs', methods=['GET'])
+@handle_errors
+def get_audit_logs():
+    """Get system audit logs (Unscoped for System Admin, scoped for Manager)"""
+    from flask import request
+    requester_role = request.headers.get('X-User-Role')
+    
+    if not requester_role or requester_role not in ['System Admin', 'Manager']:
+        return jsonify({'success': False, 'message': 'Unauthorized'}), 403
+        
+    query = {}
+    if requester_role == 'Manager':
+        # Scope Manager to all non-Admin activities
+        query = {'user_role': {'$ne': 'System Admin'}}
+        
+    logs = list(db.db.audit_logs.find(query, {'_id': 0}).sort('timestamp', -1).limit(100))
+    return jsonify({
+        'success': True,
+        'logs': _serialize(logs)
+    }), 200

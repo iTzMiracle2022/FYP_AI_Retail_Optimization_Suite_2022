@@ -10,6 +10,12 @@ from config import config
 
 connector_bp = Blueprint('connector', __name__, url_prefix='/api/connectors')
 
+@connector_bp.before_request
+def restrict_connectors():
+    requester_role = request.headers.get('X-User-Role')
+    if not requester_role or requester_role not in ['System Admin', 'Manager']:
+        return jsonify({'success': False, 'message': 'Unauthorized. Connectors require Admin or Manager privileges.'}), 403
+
 @connector_bp.route('/test', methods=['POST'])
 @handle_errors
 def test_db_connection():

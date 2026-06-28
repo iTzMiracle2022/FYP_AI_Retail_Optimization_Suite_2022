@@ -26,7 +26,18 @@ const AppearanceSettings = () => {
             <ArrowLeft size={16} /> Back to Settings
           </Link>
         </div>
-        <div className="premium-card">
+        <div style={{
+          padding: '1.75rem', borderRadius: '24px', background: 'var(--bg-card)',
+          border: '1px solid var(--border)', boxShadow: '0 4px 24px rgba(15, 23, 42, 0.05)',
+          transition: 'border-color 0.2s'
+        }}
+          onMouseEnter={e => {
+            e.currentTarget.style.borderColor = '#000000';
+          }}
+          onMouseLeave={e => {
+            e.currentTarget.style.borderColor = 'var(--border)';
+          }}
+        >
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '1.5rem', borderBottom: '1px solid var(--border)', paddingBottom: '1.5rem' }}>
             <div style={{ width: 40, height: 40, borderRadius: '10px', background: '#F0F4FF', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <Palette size={20} color="#2563EB" />

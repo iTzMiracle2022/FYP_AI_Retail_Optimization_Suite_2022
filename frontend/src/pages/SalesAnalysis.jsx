@@ -382,7 +382,18 @@ const SalesAnalysis = () => {
 
       {!results && datasets.length > 0 && !isFetching && !loading && (
         <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '50vh' }}>
-          <div className="premium-card" style={{ maxWidth: '450px', width: '100%', textAlign: 'center', padding: '3rem 2rem', background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: '16px', boxShadow: '0 4px 20px rgba(15, 23, 42, 0.05)' }}>
+          <div style={{
+            maxWidth: '450px', width: '100%', textAlign: 'center', padding: '3rem 2rem',
+            background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: '16px',
+            boxShadow: '0 4px 20px rgba(15, 23, 42, 0.05)', transition: 'border-color 0.2s'
+          }}
+            onMouseEnter={e => {
+              e.currentTarget.style.borderColor = '#000000';
+            }}
+            onMouseLeave={e => {
+              e.currentTarget.style.borderColor = 'var(--border)';
+            }}
+          >
             <div style={{ width: 64, height: 64, borderRadius: '16px', background: 'var(--bg-secondary)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 1.5rem auto' }}>
               <TrendingUp size={32} color="#3B82F6" />
             </div>

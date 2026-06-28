@@ -60,7 +60,7 @@ export const checkHealth = () => API.get('/health');
 
 // Dataset APIs (Isolated by user email)
 export const fetchDatasets = (email) => 
-  API.get(`/datasets/${email ? `?email=${email}` : ''}`);
+  API.get(`/datasets${email ? `?email=${email}` : ''}`);
 
 export const getDatasetInfo = (datasetId, email) => 
   API.get(`/datasets/${datasetId}${email ? `?email=${email}` : ''}`);

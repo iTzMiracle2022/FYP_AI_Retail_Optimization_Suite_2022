@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import Navbar from '../components/common/Navbar';
 import { Settings as SettingsIcon, Database, Cpu, Shield, User, CheckCircle, AlertCircle, Zap, X, ShieldAlert, MoreVertical, ArrowLeft } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import axios from 'axios';
+import API from '../api';
 import { useAuth } from '../context/AuthContext';
 
 const Settings = () => {
@@ -30,9 +30,9 @@ const Settings = () => {
     setLoadingUsers(true);
     setStatusMsg(null);
     try {
-      const res = await axios.get('/api/users', { params: { _t: Date.now() } }); 
-      if (res.data.success) {
-        setUsers(res.data.users);
+      const res = await API.get('/users', { params: { _t: Date.now() } }); 
+      if (res.success) {
+        setUsers(res.users);
       }
     } catch (err) {
       console.error("Failed to fetch users", err);
@@ -43,8 +43,8 @@ const Settings = () => {
 
   const handleUpdateRole = async (email, newRole) => {
     try {
-      const res = await axios.post('/api/users/update-role', { email, role: newRole });
-      if (res.data.success) {
+      const res = await API.post('/users/update-role', { email, role: newRole });
+      if (res.success) {
         setStatusMsg({ type: 'success', text: `Role updated for ${email}` });
         fetchUsers();
       }
@@ -59,17 +59,17 @@ const Settings = () => {
       return;
     }
     try {
-      const res = await axios.post('/api/users/add', newUser);
-      if (res.data.success) {
+      const res = await API.post('/users/add', newUser);
+      if (res.success) {
         setStatusMsg({ type: 'success', text: `Added ${newUser.name} to the team!` });
         setNewUser({ name: '', email: '', role: 'Analyst' });
         setIsAdding(false);
         fetchUsers();
       } else {
-        setStatusMsg({ type: 'error', text: res.data.message || "Failed to add user." });
+        setStatusMsg({ type: 'error', text: res.message || "Failed to add user." });
       }
     } catch (err) {
-      setStatusMsg({ type: 'error', text: err.response?.data?.message || "Failed to add user. Email may already exist." });
+      setStatusMsg({ type: 'error', text: err || "Failed to add user. Email may already exist." });
     }
   };
 
@@ -81,8 +81,8 @@ const Settings = () => {
     if (!window.confirm(`Are you sure you want to remove ${email}?`)) return;
 
     try {
-      const res = await axios.delete(`/api/users/${email}`);
-      if (res.data.success) {
+      const res = await API.delete(`/users/${email}`);
+      if (res.success) {
         setStatusMsg({ type: 'success', text: `Removed ${email} from the team.` });
         fetchUsers();
       }
@@ -368,7 +368,7 @@ const Settings = () => {
         )}
 
         {/* System Status Section */}
-        {user?.role === 'System Admin' && (
+        {(user?.role === 'System Admin' || user?.role === 'Manager') && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
             <div className="premium-card">
               <div style={{ display: 'flex', alignItems: 'center', gap: '1.25rem', marginBottom: '1.75rem' }}>
@@ -406,11 +406,11 @@ const Settings = () => {
                 </div>
               </div>
 
-              <a href="/analytics" style={{ textDecoration: 'none' }}>
+              <Link to="/settings/audit-logs" style={{ textDecoration: 'none' }}>
                 <button className="secondary-button" style={{ width: '100%', justifyContent: 'center', fontSize: '0.85rem', fontWeight: 700 }}>
                   View System Audit Logs
                 </button>
-              </a>
+              </Link>
             </div>
           </div>
         )}

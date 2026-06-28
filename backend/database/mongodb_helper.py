@@ -178,17 +178,28 @@ class MongoDBHelper:
             'model_accuracy': float(accuracy),
             'generated_date': datetime.now(),
             'total_customers': len(pred_list),
-            'at_risk_count': sum(1 for p in pred_list if p.get('churn_prediction') == 1)
+            'at_risk_count': sum(1 for p in pred_list if p.get('churn_prediction') == 1),
+            'risk_distribution': kwargs.get('risk_distribution', []),
+            'ai_predicted_risk_distribution': kwargs.get('ai_predicted_risk_distribution', [])
         }
         result = self.predictions.insert_one(doc)
         prediction_id = str(result.inserted_id)
 
         # Log to ml_models collection (ER Diagram)
         device = 'GPU (RTX 3050)' if kwargs.get('using_gpu') else 'CPU'
-        self._log_ml_model('RandomForestClassifier', 'churn', float(accuracy), dataset_id, prediction_id, user_email=kwargs.get('user_email'), device=device)
+        self._log_ml_model('RandomForestClassifier', 'churn', float(accuracy), dataset_id, prediction_id, user_email=kwargs.get('user_email'), device=device, metric_name='Accuracy', metric_display=f"{float(accuracy)*100:.2f}%")
 
         # Track report entry
-        self._save_report(dataset_id, 'churn', user_email=kwargs.get('user_email'), churn_prediction_id=prediction_id)
+        self._save_report(
+            dataset_id, 
+            'churn', 
+            user_email=kwargs.get('user_email'), 
+            churn_prediction_id=prediction_id,
+            charts={
+                'risk_distribution': kwargs.get('risk_distribution', []),
+                'ai_predicted_risk_distribution': kwargs.get('ai_predicted_risk_distribution', [])
+            }
+        )
 
         # Advance dataset state
         self.update_dataset_status(dataset_id, 'analyzed', user_email=kwargs.get('user_email'))
@@ -246,11 +257,13 @@ class MongoDBHelper:
                 elif coverage < 1.20: medium += 1
                 else: low += 1
         
-        low_stock_summary = []
-        if critical > 0: low_stock_summary.append({'name': 'Critical', 'value': critical})
-        if high > 0: low_stock_summary.append({'name': 'High', 'value': high})
-        if medium > 0: low_stock_summary.append({'name': 'Medium', 'value': medium})
-        if low > 0: low_stock_summary.append({'name': 'Low', 'value': low})
+        low_stock_summary = kwargs.get('low_stock_summary')
+        if low_stock_summary is None:
+            low_stock_summary = []
+            if critical > 0: low_stock_summary.append({'name': 'Critical', 'value': critical})
+            if high > 0: low_stock_summary.append({'name': 'High', 'value': high})
+            if medium > 0: low_stock_summary.append({'name': 'Medium', 'value': medium})
+            if low > 0: low_stock_summary.append({'name': 'Low', 'value': low})
 
         doc = {
             'dataset_id': dataset_id,
@@ -267,14 +280,25 @@ class MongoDBHelper:
         result = self.forecasts.insert_one(doc)
         forecast_id = str(result.inserted_id)
 
+        mape = kwargs.get('mape', 0.0)
+        improvement = kwargs.get('improvement', 0.0)
+
         # Log the run in the audit trail (ARIMA)
-        self._log_ml_model('ARIMA (Hybrid)', 'forecasting', f"{accuracy*100:.1f}%", 
-                           dataset_id, forecast_id, user_email=kwargs.get('user_email'), device='🚀 Hybrid GPU (RTX 3050)')
+        self._log_ml_model('ARIMA (Hybrid)', 'forecasting', None, 
+                           dataset_id, forecast_id, user_email=kwargs.get('user_email'), device='🚀 Hybrid GPU (RTX 3050)',
+                           metric_name='MAPE', metric_display=f"{mape:.2f}%" if mape is not None else "N/A")
         
         # Log the run in the audit trail (Q-Learning)
-        self._log_ml_model('Q-Learning Engine', 'optimization', "100.0%", 
-                           dataset_id, forecast_id, user_email=kwargs.get('user_email'), device='🚀 Hybrid GPU (RTX 3050)')
-        self._save_report(dataset_id, 'inventory', user_email=kwargs.get('user_email'), inventory_forecast_id=forecast_id)
+        self._log_ml_model('Q-Learning Engine', 'optimization', None, 
+                           dataset_id, forecast_id, user_email=kwargs.get('user_email'), device='🚀 Hybrid GPU (RTX 3050)',
+                           metric_name='Cost Improvement', metric_display=f"{improvement:.2f}%" if improvement is not None else "N/A")
+        self._save_report(
+            dataset_id, 
+            'inventory', 
+            user_email=kwargs.get('user_email'), 
+            inventory_forecast_id=forecast_id,
+            charts={'low_stock_summary': low_stock_summary}
+        )
         self.update_dataset_status(dataset_id, 'analyzed', user_email=kwargs.get('user_email'))
 
         print(f"✅ Inventory forecast saved: {dataset_id}")
@@ -346,7 +370,8 @@ class MongoDBHelper:
 
         self._log_ml_model('KMeans', 'marketing', float(silhouette or 0), dataset_id, analysis_id, 
                            user_email=kwargs.get('user_email'),
-                           device='GPU (RTX 3050)' if kwargs.get('using_gpu') else 'CPU')
+                           device='GPU (RTX 3050)' if kwargs.get('using_gpu') else 'CPU',
+                           metric_name='Silhouette Score', metric_display=f"{float(silhouette or 0):.4f}")
         self._save_report(dataset_id, 'marketing', user_email=kwargs.get('user_email'), marketing_analysis_id=analysis_id)
         self.update_dataset_status(dataset_id, 'analyzed', user_email=kwargs.get('user_email'))
 
@@ -391,7 +416,8 @@ class MongoDBHelper:
             'churn_prediction_id': churn_prediction_id,
             'inventory_forecast_id': inventory_forecast_id,
             'sales_trend_id': sales_trend_id,
-            'marketing_analysis_id': marketing_analysis_id
+            'marketing_analysis_id': marketing_analysis_id,
+            'charts': kwargs.get('charts', {})
         }
         
         query = {'dataset_id': dataset_id, 'report_type': report_type}
@@ -446,7 +472,7 @@ class MongoDBHelper:
     # ML MODELS (ER Diagram: ml_models collection)
     # ══════════════════════════════════════════════
 
-    def _log_ml_model(self, model_type, analysis_type, accuracy, dataset_id, result_id, user_email=None, device='CPU'):
+    def _log_ml_model(self, model_type, analysis_type, accuracy, dataset_id, result_id, user_email=None, device='CPU', metric_name=None, metric_display=None):
         """Log ML model run — ER Diagram ml_models entity."""
         doc = {
             'model_type': model_type,
@@ -458,6 +484,11 @@ class MongoDBHelper:
             'device': device,
             'trained_date': datetime.now()
         }
+        if metric_name:
+            doc['metric_name'] = metric_name
+        if metric_display:
+            doc['metric_display'] = metric_display
+            
         self.ml_models.insert_one(doc)
 
     def get_ml_model_history(self, user_email=None):
@@ -663,22 +694,18 @@ class MongoDBHelper:
 
             churn_query = {'prediction_type': 'churn'}
             churn_query.update(base_query)
-
-            # 1. Total Customers from latest churn prediction context
             latest_churn = self.predictions.find_one(
                 churn_query, 
-                {'_id': 0, 'total_customers': 1, 'at_risk_count': 1, 'file_path': 1, 'generated_date': 1},
+                {'_id': 0, 'total_customers': 1, 'at_risk_count': 1, 'file_path': 1, 'generated_date': 1, 'risk_distribution': 1, 'ai_predicted_risk_distribution': 1, 'dataset_id': 1},
                 sort=[('generated_date', DESCENDING)]
             )
             
-            # 2. Latest inventory accuracy & stock
             latest_inv = self.forecasts.find_one(
                 base_query, 
-                {'_id': 0, 'model_accuracy': 1, 'total_stock': 1, 'low_stock_summary': 1, 'file_path': 1, 'generated_date': 1},
+                {'_id': 0, 'model_accuracy': 1, 'total_stock': 1, 'low_stock_summary': 1, 'file_path': 1, 'generated_date': 1, 'dataset_id': 1},
                 sort=[('generated_date', DESCENDING)]
             )
             
-            # 3. Latest Sales Report for Revenue
             sales_query = {'report_type': 'sales'}
             sales_query.update(base_query)
             latest_sales = self.reports.find_one(
@@ -686,7 +713,6 @@ class MongoDBHelper:
                 sort=[('generated_date', DESCENDING)]
             )
             
-            # 3b. Latest Marketing Segmentation
             marketing_query = {'prediction_type': 'marketing'}
             marketing_query.update(base_query)
             latest_marketing = self.predictions.find_one(
@@ -695,23 +721,65 @@ class MongoDBHelper:
                 sort=[('generated_date', DESCENDING)]
             )
 
-            # 4. Aggregated calculations (Fallback defaults)
             total_customers = latest_churn.get('total_customers', "-") if latest_churn else "-"
-            at_risk = "-" # Will be overwritten by customer-level logic
-            
+            at_risk = latest_churn.get('at_risk_count', "-") if latest_churn else "-"
             total_revenue = latest_sales.get('kpis', {}).get('total_revenue', "-") if latest_sales else "-"
             total_stock = latest_inv.get('total_stock', "-") if latest_inv else "-"
             
-            active_datasets = self.datasets.count_documents({}) # Count all team datasets
-            reports_generated = self.reports.count_documents({}) # Count all team reports
-            low_stock = "-" # Default fallback
+            active_datasets = self.datasets.count_documents({})
+            reports_generated = self.reports.count_documents({})
+            low_stock = "-"
 
-            # --- OVERRIDE WITH REAL DATASET METRICS ---
+            # --- SOURCING FROM DATABASE REPORTS / PREDICTIONS (DYNAMIC) ---
             revenue_trend = []
             real_inventory_data = None
             real_churn_data = None
-            
-            # Helper imports
+
+            # 1. Dynamic DB-Sourced Revenue Trend
+            if latest_sales and latest_sales.get('charts'):
+                prefix = "" if not rev_days or str(rev_days).lower() == 'all' else f"{rev_days}_"
+                trend_key = f"{prefix}{rev_freq}_revenue_trend"
+                db_trend = latest_sales['charts'].get(trend_key)
+                if db_trend:
+                    revenue_trend = [
+                        {'name': item.get('label', item.get('date')), 'value': int(item.get('revenue', 0))}
+                        for item in db_trend
+                    ]
+
+            # 2. Dynamic DB-Sourced Churn Risk Distribution
+            if latest_churn:
+                churn_report = self.reports.find_one({'report_type': 'churn', 'dataset_id': latest_churn.get('dataset_id')}, sort=[('generated_date', DESCENDING)])
+                dist = None
+                if churn_report and churn_report.get('charts'):
+                    dist = churn_report['charts'].get('ai_predicted_risk_distribution')
+                if not dist and latest_churn.get('ai_predicted_risk_distribution'):
+                    dist = latest_churn.get('ai_predicted_risk_distribution')
+                if not dist and latest_churn.get('risk_distribution'):
+                    dist = latest_churn.get('risk_distribution')
+                
+                if dist:
+                    real_churn_data = [
+                        {'name': item.get('label', item.get('name')), 'value': item.get('customer_count', item.get('value'))}
+                        for item in dist
+                    ]
+                    # Dynamically calculate correct customer-level counts to prevent transaction-level leaks
+                    total_customers = sum(item['value'] for item in real_churn_data if isinstance(item.get('value'), (int, float)))
+                    at_risk = sum(item['value'] for item in real_churn_data if item.get('name') in ['Watchlist', 'High Risk', 'Medium Risk', 'At-Risk'] and isinstance(item.get('value'), (int, float)))
+
+            # 3. Dynamic DB-Sourced Inventory Low Stock Summary
+            if latest_inv:
+                inv_report = self.reports.find_one({'report_type': 'inventory', 'dataset_id': latest_inv.get('dataset_id')}, sort=[('generated_date', DESCENDING)])
+                summary = None
+                if inv_report and inv_report.get('charts'):
+                    summary = inv_report['charts'].get('low_stock_summary')
+                if not summary and latest_inv.get('low_stock_summary'):
+                    summary = latest_inv.get('low_stock_summary')
+                
+                if summary:
+                    real_inventory_data = summary
+                    low_stock = sum(item['value'] for item in summary)
+
+            # Helper imports for file-based fallback
             try:
                 import pandas as pd
                 from pathlib import Path
@@ -722,21 +790,23 @@ class MongoDBHelper:
                 print(f"Warning: Initialization error in dashboard metrics calculations: {e}")
                 raw_data_dir = None
 
-            # 1. Total Revenue & True Total Customers from Raw Dataset
+            # --- FILE FALLBACKS (If DB lacks cached charts) ---
             if raw_data_dir:
+                # 1. Total Revenue & True Total Customers Fallback
                 try:
                     ecommerce_path = raw_data_dir / 'ecommerce_customer_data_custom_ratios.csv'
+                    if not ecommerce_path.exists():
+                        ecommerce_path = raw_data_dir / 'ecommerce_customer_data.csv'
                     if ecommerce_path.exists():
                         df = pd.read_csv(ecommerce_path)
                         if 'Total Purchase Amount' in df.columns:
                             total_revenue = float(df['Total Purchase Amount'].sum())
-                        if 'Customer Name' in df.columns:
+                        if 'Customer Name' in df.columns and (total_customers == "-" or total_customers is None):
                             total_customers = int(df['Customer Name'].nunique())
                         
-                        # 1b. Real Revenue Trend
-                        if 'Purchase Date' in df.columns and 'Total Purchase Amount' in df.columns:
+                        # Fallback Revenue Trend if not loaded from DB
+                        if not revenue_trend and 'Purchase Date' in df.columns and 'Total Purchase Amount' in df.columns:
                             df['Purchase Date'] = pd.to_datetime(df['Purchase Date'], errors='coerce')
-                            
                             latest_date = df['Purchase Date'].max()
                             if pd.notna(latest_date):
                                 if str(rev_days).lower() == 'all':
@@ -745,13 +815,9 @@ class MongoDBHelper:
                                 else:
                                     rev_days_int = int(rev_days) if rev_days and str(rev_days).isdigit() else 30
                                     
-                                # Ensure exact calendar days
                                 date_range = pd.date_range(end=latest_date.date(), periods=rev_days_int, freq='D')
-                                
                                 daily_rev = df.groupby(df['Purchase Date'].dt.date)['Total Purchase Amount'].sum()
                                 daily_rev.index = pd.to_datetime(daily_rev.index)
-                                
-                                # Reindex to fill missing days with 0
                                 daily_rev = daily_rev.reindex(date_range, fill_value=0)
                                 
                                 if rev_freq == 'weekly':
@@ -763,119 +829,111 @@ class MongoDBHelper:
                                     resampled.columns = ['Purchase Date', 'Total Purchase Amount']
                                     revenue_trend = [{'name': row['Purchase Date'].strftime('%b %Y'), 'value': int(row['Total Purchase Amount'])} for _, row in resampled.iterrows()]
                                 else:
-                                    # daily
                                     resampled = daily_rev.reset_index()
                                     resampled.columns = ['Purchase Date', 'Total Purchase Amount']
                                     revenue_trend = [{'name': '-'.join(str(row['Purchase Date'].date()).split('-')[1:]), 'value': int(row['Total Purchase Amount'])} for _, row in resampled.iterrows()]
                 except Exception as e:
                     print(f"Warning: Could not compute raw sales metrics: {e}")
 
-                # 2. True At-Risk Customers from Predictions
-                try:
-                    if latest_churn and latest_churn.get('file_path'):
-                        file_path = latest_churn['file_path']
-                        if os.path.exists(file_path):
-                            with open(file_path, 'r') as f:
-                                preds = json.load(f)
-                            preds_df = pd.DataFrame(preds)
-                            
-                            # Ensure customer-level aggregation
-                            cust_col = 'customer_name' if 'customer_name' in preds_df.columns else ('customer id' if 'customer id' in preds_df.columns else None)
-                            if cust_col:
-                                total_customers = int(preds_df[cust_col].nunique())
-                                
-                                # Churn prediction (At risk is max prediction per customer)
-                                pred_col = 'churn_prediction' if 'churn_prediction' in preds_df.columns else ('model_predicted_churn' if 'model_predicted_churn' in preds_df.columns else None)
-                                if pred_col:
-                                    at_risk = int(preds_df.groupby(cust_col)[pred_col].max().sum())
-                                
-                                # Risk zone counts based on churn_probability
-                                prob_col = 'churn_probability' if 'churn_probability' in preds_df.columns else ('model_churn_probability' if 'model_churn_probability' in preds_df.columns else None)
-                                if prob_col:
-                                    cust_probs = preds_df.groupby(cust_col)[prob_col].max() * 100
-                                    low_risk_count = int((cust_probs <= 50.0).sum())
-                                    watchlist_count = int(((cust_probs > 50.0) & (cust_probs < 83.0)).sum())
-                                    high_risk_count = int((cust_probs >= 83.0).sum())
+                # 2. True At-Risk Customers Fallback
+                if not real_churn_data:
+                    try:
+                        if latest_churn and latest_churn.get('file_path'):
+                            file_path = latest_churn['file_path']
+                            if os.path.exists(file_path):
+                                with open(file_path, 'r') as f:
+                                    preds = json.load(f)
+                                preds_df = pd.DataFrame(preds)
+                                cust_col = 'customer_name' if 'customer_name' in preds_df.columns else ('customer id' if 'customer id' in preds_df.columns else None)
+                                if cust_col:
+                                    total_customers = int(preds_df[cust_col].nunique())
+                                    pred_col = 'churn_prediction' if 'churn_prediction' in preds_df.columns else ('model_predicted_churn' if 'model_predicted_churn' in preds_df.columns else None)
+                                    if pred_col:
+                                        at_risk = int(preds_df.groupby(cust_col)[pred_col].max().sum())
                                     
-                                    real_churn_data = [
-                                        {'name': 'Low Risk', 'value': low_risk_count},
-                                        {'name': 'Watchlist', 'value': watchlist_count},
-                                        {'name': 'High Risk', 'value': high_risk_count}
-                                    ]
-                        else:
-                            print(f"Warning: Churn prediction file not found on disk: {file_path}")
-                except Exception as e:
-                    print(f"Warning: Could not compute churn dashboard metrics: {e}")
+                                    prob_col = 'churn_probability' if 'churn_probability' in preds_df.columns else ('model_churn_probability' if 'model_churn_probability' in preds_df.columns else None)
+                                    if prob_col:
+                                        cust_probs = preds_df.groupby(cust_col)[prob_col].max() * 100
+                                        low_risk_count = int((cust_probs <= 50.0).sum())
+                                        watchlist_count = int(((cust_probs > 50.0) & (cust_probs < 83.0)).sum())
+                                        high_risk_count = int((cust_probs >= 83.0).sum())
+                                        
+                                        real_churn_data = [
+                                            {'name': 'Low Risk', 'value': low_risk_count},
+                                            {'name': 'Watchlist', 'value': watchlist_count},
+                                            {'name': 'High Risk', 'value': high_risk_count}
+                                        ]
+                            else:
+                                print(f"Warning: Churn prediction file not found on disk: {file_path}")
+                    except Exception as e:
+                        print(f"Warning: Could not compute churn dashboard metrics: {e}")
 
-                # 3. True Low Stock Alerts from Full Forecasts
-                try:
-                    inventory_path = raw_data_dir / 'retail_store_inventory.csv'
-                    if inventory_path.exists():
-                        inv_df = pd.read_csv(inventory_path)
-                        
-                        # Dynamic column detection as in InventoryForecaster
-                        from utils.data_preprocessing import ColumnMatcher
-                        inv_df.columns = [c.strip() for c in inv_df.columns]
-                        qty_col = ColumnMatcher.match(inv_df, 'qty') or 'Inventory Level'
-                        forecast_col = ColumnMatcher.match(inv_df, 'forecast') or 'Demand Forecast'
-                        
-                        if qty_col in inv_df.columns and forecast_col in inv_df.columns:
-                            # Group by Product, Store, Region for the latest date
-                            date_col = ColumnMatcher.match(inv_df, 'date') or 'Date'
-                            if date_col in inv_df.columns:
-                                inv_df[date_col] = pd.to_datetime(inv_df[date_col], errors='coerce')
-                                latest_date = inv_df[date_col].max()
-                                df_latest = inv_df[inv_df[date_col] == latest_date].copy()
-                            else:
-                                df_latest = inv_df.copy()
-                                
-                            prod_col = ColumnMatcher.match(df_latest, 'product') or 'Product ID'
-                            store_col = next((c for c in df_latest.columns if 'store' in c.lower()), 'Store ID')
-                            region_col = next((c for c in df_latest.columns if 'region' in c.lower()), 'Region')
+                # 3. True Low Stock Alerts Fallback
+                if real_inventory_data is None:
+                    try:
+                        inventory_path = raw_data_dir / 'retail_store_inventory.csv'
+                        if inventory_path.exists():
+                            inv_df = pd.read_csv(inventory_path)
+                            from utils.data_preprocessing import ColumnMatcher
+                            inv_df.columns = [c.strip() for c in inv_df.columns]
+                            qty_col = ColumnMatcher.match(inv_df, 'qty') or 'Inventory Level'
+                            forecast_col = ColumnMatcher.match(inv_df, 'forecast') or 'Demand Forecast'
                             
-                            groupby_cols = []
-                            if prod_col in df_latest.columns: groupby_cols.append(prod_col)
-                            if store_col in df_latest.columns: groupby_cols.append(store_col)
-                            if region_col in df_latest.columns: groupby_cols.append(region_col)
-                            
-                            if groupby_cols:
-                                grouped = df_latest.groupby(groupby_cols).agg({
-                                    qty_col: 'min', 
-                                    forecast_col: 'mean'
-                                }).reset_index()
+                            if qty_col in inv_df.columns and forecast_col in inv_df.columns:
+                                date_col = ColumnMatcher.match(inv_df, 'date') or 'Date'
+                                if date_col in inv_df.columns:
+                                    inv_df[date_col] = pd.to_datetime(inv_df[date_col], errors='coerce')
+                                    latest_date = inv_df[date_col].max()
+                                    df_latest = inv_df[inv_df[date_col] == latest_date].copy()
+                                else:
+                                    df_latest = inv_df.copy()
+                                    
+                                prod_col = ColumnMatcher.match(df_latest, 'product') or 'Product ID'
+                                store_col = next((c for c in df_latest.columns if 'store' in c.lower()), 'Store ID')
+                                region_col = next((c for c in df_latest.columns if 'region' in c.lower()), 'Region')
                                 
-                                # Low stock alert logic: Inventory < Forecast * 1.2
-                                grouped['is_low'] = grouped[qty_col] < (grouped[forecast_col] * 1.2)
-                                low_stock = int(grouped['is_low'].sum())
-                                low_alerts = grouped[grouped['is_low']].copy()
+                                groupby_cols = []
+                                if prod_col in df_latest.columns: groupby_cols.append(prod_col)
+                                if store_col in df_latest.columns: groupby_cols.append(store_col)
+                                if region_col in df_latest.columns: groupby_cols.append(region_col)
+                                
+                                if groupby_cols:
+                                    grouped = df_latest.groupby(groupby_cols).agg({
+                                        qty_col: 'min', 
+                                        forecast_col: 'mean'
+                                    }).reset_index()
+                                    grouped['is_low'] = grouped[qty_col] < (grouped[forecast_col] * 1.2)
+                                    low_stock = int(grouped['is_low'].sum())
+                                    low_alerts = grouped[grouped['is_low']].copy()
+                                else:
+                                    df_latest['is_low'] = df_latest[qty_col] < (df_latest[forecast_col] * 1.2)
+                                    low_stock = int(df_latest['is_low'].sum())
+                                    low_alerts = df_latest[df_latest['is_low']].copy()
+                                    
+                                if low_stock > 0 and not low_alerts.empty:
+                                    critical = high = medium = low = 0
+                                    for _, row in low_alerts.iterrows():
+                                        inv_val = float(row[qty_col] or 0)
+                                        dmd_val = float(row[forecast_col] or 0)
+                                        coverage = inv_val / dmd_val if dmd_val > 0 else 0
+                                        if coverage < 0.70: critical += 1
+                                        elif coverage < 0.90: high += 1
+                                        elif coverage < 1.20: medium += 1
+                                        else: low += 1
+                                    real_inventory_data = []
+                                    if critical > 0: real_inventory_data.append({'name': 'Critical', 'value': critical})
+                                    if high > 0: real_inventory_data.append({'name': 'High', 'value': high})
+                                    if medium > 0: real_inventory_data.append({'name': 'Medium', 'value': medium})
+                                    if low > 0: real_inventory_data.append({'name': 'Low', 'value': low})
+                                elif low_stock == 0:
+                                    real_inventory_data = []
                             else:
-                                df_latest['is_low'] = df_latest[qty_col] < (df_latest[forecast_col] * 1.2)
-                                low_stock = int(df_latest['is_low'].sum())
-                                low_alerts = df_latest[df_latest['is_low']].copy()
-                                
-                            if low_stock > 0 and not low_alerts.empty:
-                                critical = high = medium = low = 0
-                                for _, row in low_alerts.iterrows():
-                                    inv_val = float(row[qty_col] or 0)
-                                    dmd_val = float(row[forecast_col] or 0)
-                                    coverage = inv_val / dmd_val if dmd_val > 0 else 0
-                                    if coverage < 0.70: critical += 1
-                                    elif coverage < 0.90: high += 1
-                                    elif coverage < 1.20: medium += 1
-                                    else: low += 1
-                                real_inventory_data = []
-                                if critical > 0: real_inventory_data.append({'name': 'Critical', 'value': critical})
-                                if high > 0: real_inventory_data.append({'name': 'High', 'value': high})
-                                if medium > 0: real_inventory_data.append({'name': 'Medium', 'value': medium})
-                                if low > 0: real_inventory_data.append({'name': 'Low', 'value': low})
-                            elif low_stock == 0:
-                                real_inventory_data = []
+                                low_stock = "-"
                         else:
                             low_stock = "-"
-                    else:
-                        low_stock = "-"
-                except Exception as e:
-                    print(f"Warning: Could not compute real inventory metrics: {e}")
+                    except Exception as e:
+                        print(f"Warning: Could not compute real inventory metrics: {e}")
+
 
             # --- Compile Module Insights ---
             module_insights = {

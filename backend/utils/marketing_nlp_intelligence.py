@@ -233,6 +233,23 @@ class _NLPRuntime:
         if self._initialized:
             return self
 
+        import os
+        import logging
+        import warnings
+        
+        warnings.filterwarnings("ignore")
+        os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
+        os.environ["TOKENIZERS_PARALLELISM"] = "false"
+        
+        for logger_name in ["transformers", "huggingface_hub", "sentence_transformers", "keybert", "urllib3", "filelock"]:
+            logging.getLogger(logger_name).setLevel(logging.ERROR)
+            
+        try:
+            import transformers
+            transformers.utils.logging.set_verbosity_error()
+        except ImportError:
+            pass
+
         try:
             import torch  # type: ignore
             self.torch_available = True
@@ -1063,51 +1080,72 @@ def print_nlp_console_summary(nlp_insights: dict | None, *, dataset_id: str, cac
     negative = distribution.get("negative", {}).get("percentage", 0)
     top_themes = nlp_insights.get("top_themes") or []
 
-    print("================ NLP FEEDBACK INTELLIGENCE SUMMARY ================")
-    print(f"Dataset: {dataset_id}")
-    print(f"NLP Cache Status: {status}")
-    print(f"NLP Device: {nlp_insights.get('device', 'CPU fallback')}")
-    print(f"Feedback Records Analyzed: {int(nlp_insights.get('feedback_records_analyzed') or 0):,}")
-    print(f"Language Mode: {nlp_insights.get('language_mode', 'Unknown')}")
-    print(f"Sentiment Model: {nlp_insights.get('sentiment_model', 'VADER fallback')}")
-    print(f"Theme Model: {nlp_insights.get('theme_model', 'TF-IDF fallback')}")
+    import textwrap
+    def print_wrapped_kv(label, text, indent_width=25, width=80):
+        prefix = f"{label:<{indent_width}} : "
+        lines = textwrap.wrap(str(text), width=width - indent_width - 3)
+        if not lines:
+            print(prefix)
+            return
+        print(f"{prefix}{lines[0]}")
+        for line in lines[1:]:
+            print(f"{' ' * (indent_width + 3)}{line}")
+
+    print("\n" + "=" * 80)
+    print(f"║ {'NLP FEEDBACK INTELLIGENCE SUMMARY':^76} ║")
+    print("=" * 80)
+
+    print("\n─── NLP SENTIMENT SUMMARY ──────────────────────────────────────────────────────")
+    print_wrapped_kv("Dataset Name", dataset_id)
+    print_wrapped_kv("NLP Cache Status", status)
+    print_wrapped_kv("NLP Device", nlp_insights.get('device', 'CPU fallback'))
+    print_wrapped_kv("Feedback Records", f"{int(nlp_insights.get('feedback_records_analyzed') or 0):,}")
+    print_wrapped_kv("Language Mode", nlp_insights.get('language_mode', 'Unknown'))
+    print_wrapped_kv("Sentiment Model", nlp_insights.get('sentiment_model', 'VADER fallback'))
+    print_wrapped_kv("Theme Model", nlp_insights.get('theme_model', 'TF-IDF fallback'))
+    
     score = nlp_insights.get("overall_sentiment_score")
-    print(f"Overall Sentiment Score: {score if score is not None else 'N/A'}%")
-    print(f"Positive Feedback: {positive}%")
-    print(f"Neutral Feedback: {neutral}%")
-    print(f"Negative Feedback: {negative}%")
-    print(f"Mixed Signal Flags: {nlp_insights.get('possible_sarcasm_count', 0)}")
-    print(f"Most Discussed Aspect: {nlp_insights.get('most_discussed_aspect') or nlp_insights.get('top_complaint_aspect') or 'N/A'}")
-    print(f"Top Positive Aspect: {nlp_insights.get('top_positive_aspect') or 'N/A'}")
-    print("Top Feedback Themes:")
-    if top_themes:
-        for theme in top_themes[:5]:
-            print(f"* {theme}")
-    else:
-        print("* N/A")
-    print(f"NLP Processing Time: {nlp_insights.get('processing_time_ms', 'N/A')} ms")
-    print(f"Fallback Used: {'Yes' if nlp_insights.get('fallback_used') else 'No'}")
+    print_wrapped_kv("Overall Sentiment Score", f"{score if score is not None else 'N/A'}%")
+    print_wrapped_kv("Positive Feedback", f"{positive}%")
+    print_wrapped_kv("Neutral Feedback", f"{neutral}%")
+    print_wrapped_kv("Negative Feedback", f"{negative}%")
+    print_wrapped_kv("Mixed Signal Flags", str(nlp_insights.get('possible_sarcasm_count', 0)))
+    print_wrapped_kv("Most Discussed Aspect", nlp_insights.get('most_discussed_aspect') or nlp_insights.get('top_complaint_aspect') or 'N/A')
+    print_wrapped_kv("Top Positive Aspect", nlp_insights.get('top_positive_aspect') or 'N/A')
+    
+    themes_str = ", ".join(top_themes[:5]) if top_themes else "N/A"
+    print_wrapped_kv("Top Themes", themes_str)
+    print_wrapped_kv("NLP Processing Time", f"{nlp_insights.get('processing_time_ms', 'N/A')} ms")
+    print_wrapped_kv("Fallback Used", 'Yes' if nlp_insights.get('fallback_used') else 'No')
+    
     diagnostics = nlp_insights.get("diagnostics") or {}
     if diagnostics:
-        print(
-            "Diagnostics: "
-            f"transformers_available={diagnostics.get('transformers_available')} | "
-            f"sentence_transformers_available={diagnostics.get('sentence_transformers_available')} | "
-            f"keybert_available={diagnostics.get('keybert_available')} | "
-            f"device={diagnostics.get('device')} | "
-            f"fallback_used={diagnostics.get('fallback_used')}"
+        diag_str = (
+            f"transformers={diagnostics.get('transformers_available')} | "
+            f"sentence_transformers={diagnostics.get('sentence_transformers_available')} | "
+            f"keybert={diagnostics.get('keybert_available')} | "
+            f"device={diagnostics.get('device')}"
         )
-    print("===================================================================")
+        print_wrapped_kv("Diagnostics", diag_str)
+    print("=" * 80 + "\n")
 
     rows = nlp_insights.get("top_themes_by_segment") or []
     if rows:
-        print("NLP by Segment:")
+        print("─── NLP BY SEGMENT ─────────────────────────────────────────────────────────────")
+        header = f"{'Segment Name':<20} | {'Sentiment':<10} | {'Top Aspect':<18} | {'Themes':<20} | {'Mixed Flags':<11}"
+        print(header)
+        print("-" * len(header))
         for row in rows:
             themes = ", ".join((row.get("top_themes") or row.get("top_keywords") or [])[:3]) or "N/A"
-            print(
-                f"{row.get('segment_display_name', 'Segment')} | "
-                f"Sentiment={row.get('sentiment_label', 'Unknown')} | "
-                f"Top Aspect={row.get('top_negative_aspect') or row.get('top_positive_aspect') or 'N/A'} | "
-                f"Themes={themes} | "
-                f"Mixed Signal Flags={row.get('possible_sarcasm_count', 0)}"
+            seg_name = row.get('segment_display_name', 'Segment')
+            if len(seg_name) > 20: seg_name = seg_name[:17] + "..."
+            
+            row_str = (
+                f"{seg_name:<20} | "
+                f"{row.get('sentiment_label', 'Unknown'):<10} | "
+                f"{(row.get('top_negative_aspect') or row.get('top_positive_aspect') or 'N/A'):<18} | "
+                f"{themes:<20} | "
+                f"{row.get('possible_sarcasm_count', 0):<11}"
             )
+            print(row_str)
+        print("=" * 80 + "\n")

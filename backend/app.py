@@ -73,18 +73,23 @@ def create_app():
         # Public routes exemption
         public_endpoints = [
             '/api/users/login',
+            '/api/users/signup',
             '/api/users/register',
             '/api/users/google-login',
             '/api/users/google-setup',
-            '/api/users/logout'
+            '/api/users/logout',
+            '/api/users/forgot-password',
+            '/api/reports/download/'
         ]
-        if any(request.path.startswith(pe) for pe in public_endpoints) or request.path.startswith('/api/users/verify/'):
+        if any(request.path.startswith(pe) for pe in public_endpoints) or request.path.startswith('/api/users/verify/') or request.path.startswith('/api/users/reset-password/'):
             return None
 
-        # ── Developer Bypass Key Control ──
+
+
+        # ── Developer Bypass Key Control (Active only in Debug mode) ──
         dev_bypass_key = os.environ.get('DEV_BYPASS_KEY')
         client_bypass_key = request.headers.get('X-Dev-Bypass-Key')
-        if dev_bypass_key and client_bypass_key == dev_bypass_key:
+        if config.DEBUG and dev_bypass_key and client_bypass_key == dev_bypass_key:
             return None # Bypass successfully granted
 
         # Verify secure HTTP-only auth token cookie

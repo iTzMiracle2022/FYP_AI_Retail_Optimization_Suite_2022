@@ -22,6 +22,7 @@ const TeamSettings = lazy(() => import('./pages/settings/TeamSettings'));
 const HealthSettings = lazy(() => import('./pages/settings/HealthSettings'));
 const AppearanceSettings = lazy(() => import('./pages/settings/AppearanceSettings'));
 const Analytics = lazy(() => import('./pages/AnalyticsPage'));
+const AuditLogsSettings = lazy(() => import('./pages/settings/AuditLogsSettings'));
 const AdminSettings = lazy(() => import('./pages/AdminSettings'));
 const VerifyEmail = lazy(() => import('./pages/VerifyEmail'));
 const ForgotPasswordPage = lazy(() => import('./pages/ForgotPasswordPage'));
@@ -87,19 +88,20 @@ function App() {
             <Route path="/dashboard" element={<MainLayout><ProtectedRoute><Dashboard /></ProtectedRoute></MainLayout>} />
             
             {/* ML & Analytics - Restricted by Role */}
-            <Route path="/churn"     element={<MainLayout><ProtectedRoute allowedRoles={['System Admin', 'Manager', 'Analyst']}><ChurnPrediction /></ProtectedRoute></MainLayout>} />
-            <Route path="/inventory" element={<MainLayout><ProtectedRoute allowedRoles={['System Admin', 'Manager']}><InventoryForecast /></ProtectedRoute></MainLayout>} />
-            <Route path="/marketing" element={<MainLayout><ProtectedRoute allowedRoles={['System Admin', 'Manager', 'Analyst']}><MarketingAnalysis /></ProtectedRoute></MainLayout>} />
-            <Route path="/sales"     element={<MainLayout><ProtectedRoute allowedRoles={['System Admin', 'Manager', 'Viewer']}><SalesTrend /></ProtectedRoute></MainLayout>} />
+            <Route path="/churn"     element={<MainLayout><ProtectedRoute allowedRoles={['System Admin', 'Manager', 'Analyst', 'Viewer']}><ChurnPrediction /></ProtectedRoute></MainLayout>} />
+            <Route path="/inventory" element={<MainLayout><ProtectedRoute allowedRoles={['System Admin', 'Manager', 'Analyst', 'Viewer']}><InventoryForecast /></ProtectedRoute></MainLayout>} />
+            <Route path="/marketing" element={<MainLayout><ProtectedRoute allowedRoles={['System Admin', 'Manager', 'Analyst', 'Viewer']}><MarketingAnalysis /></ProtectedRoute></MainLayout>} />
+            <Route path="/sales"     element={<MainLayout><ProtectedRoute allowedRoles={['System Admin', 'Manager', 'Analyst', 'Viewer']}><SalesTrend /></ProtectedRoute></MainLayout>} />
             
             <Route path="/upload"    element={<MainLayout><ProtectedRoute allowedRoles={['Manager', 'System Admin']}><DatasetUpload /></ProtectedRoute></MainLayout>} />
             <Route path="/settings"  element={<MainLayout><ProtectedRoute><Settings /></ProtectedRoute></MainLayout>} />
             <Route path="/settings/profile" element={<MainLayout><ProtectedRoute><ProfileSettings /></ProtectedRoute></MainLayout>} />
             <Route path="/settings/roles" element={<MainLayout><ProtectedRoute><RolesSettings /></ProtectedRoute></MainLayout>} />
-            <Route path="/settings/team" element={<MainLayout><ProtectedRoute><TeamSettings /></ProtectedRoute></MainLayout>} />
+            <Route path="/settings/team" element={<MainLayout><ProtectedRoute allowedRoles={['System Admin', 'Manager']}><TeamSettings /></ProtectedRoute></MainLayout>} />
             <Route path="/settings/health" element={<MainLayout><ProtectedRoute><HealthSettings /></ProtectedRoute></MainLayout>} />
             <Route path="/settings/appearance" element={<MainLayout><ProtectedRoute><AppearanceSettings /></ProtectedRoute></MainLayout>} />
             <Route path="/analytics" element={<MainLayout><ProtectedRoute allowedRoles={['System Admin', 'Manager']}><Analytics /></ProtectedRoute></MainLayout>} />
+            <Route path="/settings/audit-logs" element={<MainLayout><ProtectedRoute allowedRoles={['System Admin', 'Manager']}><AuditLogsSettings /></ProtectedRoute></MainLayout>} />
             
             {/* SuperAdmin Only */}
             {/* <Route path="/admin/connectors" element={<MainLayout><ProtectedRoute allowedRoles={['System Admin']}><AdminSettings /></ProtectedRoute></MainLayout>} /> */}

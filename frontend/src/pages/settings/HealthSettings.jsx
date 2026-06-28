@@ -33,7 +33,19 @@ const HealthSettings = () => {
         
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem', marginBottom: '1.5rem' }}>
           
-          <div className="premium-card" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+          <div style={{
+            display: 'flex', flexDirection: 'column', gap: '1rem',
+            padding: '1.75rem', borderRadius: '24px', background: 'var(--bg-card)',
+            border: '1px solid var(--border)', boxShadow: '0 4px 24px rgba(15, 23, 42, 0.05)',
+            transition: 'border-color 0.2s'
+          }}
+            onMouseEnter={e => {
+              e.currentTarget.style.borderColor = '#000000';
+            }}
+            onMouseLeave={e => {
+              e.currentTarget.style.borderColor = 'var(--border)';
+            }}
+          >
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                 <Server size={20} color="#2563EB" />
@@ -44,7 +56,19 @@ const HealthSettings = () => {
             <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-light)' }}>{data.api.details}</p>
           </div>
 
-          <div className="premium-card" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+          <div style={{
+            display: 'flex', flexDirection: 'column', gap: '1rem',
+            padding: '1.75rem', borderRadius: '24px', background: 'var(--bg-card)',
+            border: '1px solid var(--border)', boxShadow: '0 4px 24px rgba(15, 23, 42, 0.05)',
+            transition: 'border-color 0.2s'
+          }}
+            onMouseEnter={e => {
+              e.currentTarget.style.borderColor = '#000000';
+            }}
+            onMouseLeave={e => {
+              e.currentTarget.style.borderColor = 'var(--border)';
+            }}
+          >
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                 <Cpu size={20} color="#7C3AED" />
@@ -55,7 +79,19 @@ const HealthSettings = () => {
             <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-light)' }}>{data.models.details}</p>
           </div>
 
-          <div className="premium-card" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+          <div style={{
+            display: 'flex', flexDirection: 'column', gap: '1rem',
+            padding: '1.75rem', borderRadius: '24px', background: 'var(--bg-card)',
+            border: '1px solid var(--border)', boxShadow: '0 4px 24px rgba(15, 23, 42, 0.05)',
+            transition: 'border-color 0.2s'
+          }}
+            onMouseEnter={e => {
+              e.currentTarget.style.borderColor = '#000000';
+            }}
+            onMouseLeave={e => {
+              e.currentTarget.style.borderColor = 'var(--border)';
+            }}
+          >
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                 <Database size={20} color="#F59E0B" />
@@ -66,7 +102,19 @@ const HealthSettings = () => {
             <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-light)' }}>{data.database.details}</p>
           </div>
 
-          <div className="premium-card" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+          <div style={{
+            display: 'flex', flexDirection: 'column', gap: '1rem',
+            padding: '1.75rem', borderRadius: '24px', background: 'var(--bg-card)',
+            border: '1px solid var(--border)', boxShadow: '0 4px 24px rgba(15, 23, 42, 0.05)',
+            transition: 'border-color 0.2s'
+          }}
+            onMouseEnter={e => {
+              e.currentTarget.style.borderColor = '#000000';
+            }}
+            onMouseLeave={e => {
+              e.currentTarget.style.borderColor = 'var(--border)';
+            }}
+          >
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                 <Activity size={20} color="#EC4899" />

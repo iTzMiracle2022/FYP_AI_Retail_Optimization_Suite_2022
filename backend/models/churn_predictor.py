@@ -33,13 +33,22 @@ try:
     from cuml.ensemble import RandomForestClassifier as cuRandomForest
 
     GPU_AVAILABLE = True
-    print("🚀 NVIDIA RAPIDS (cuML) detected! GPU acceleration enabled for Churn.")
+    print("🚀 NVIDIA RAPIDS (cuML) detected in environment, but not enabled/used for Churn (sklearn CPU is the official, validated training backend due to class-weight requirements).")
 except ImportError:
     GPU_AVAILABLE = False
     print("ℹ️ RAPIDS not found. Falling back to CPU (Scikit-Learn).")
 
 
-CHURN_MODEL_VERSION = "customer_rf_v6_dedup_age"
+CHURN_MODEL_VERSION = "churn-rf-v1.5.0"
+
+CHURN_MODEL_CHANGELOG = {
+    "v1.0.0": "Initial customer-level RF churn model",
+    "v1.1.0": "Fixed customer identity grouping (ID/name collision robustness)",
+    "v1.2.0": "Fixed return_rate NaN handling",
+    "v1.3.0": "Fixed train/test leakage in final model refit",
+    "v1.4.0": "Removed redundant duplicate age feature",
+    "v1.5.0": "Professionalized model version and polished console/terminal formatting",
+}
 
 
 class ChurnPredictor:
@@ -250,7 +259,7 @@ class ChurnPredictor:
                 self.evaluation["model_configs_evaluated"] = int(self.evaluation.get("model_configs_evaluated") or 0)
                 self.evaluation["model_version"] = CHURN_MODEL_VERSION
                 self.evaluation["tuning_backend"] = "sklearn_cpu"
-                self.evaluation["tuning_backend_reason"] = "sklearn supports class_weight, feature importance, and controlled validation tuning."
+                self.evaluation["tuning_backend_reason"] = "sklearn supports class-weighted RandomForest training, which the installed cuML version does not — this is the deciding factor for using CPU as the Churn training backend."
                 self.evaluation["gpu_inference_available"] = bool(GPU_AVAILABLE)
                 self.evaluation["gpu_used_for_this_evaluation"] = False
             self.accuracy = self.evaluation.get("accuracy") if self.evaluation else None
@@ -1108,7 +1117,7 @@ class ChurnPredictor:
             "configs_evaluated_this_run": int(configs_evaluated),
             "model_version": CHURN_MODEL_VERSION,
             "tuning_backend": "sklearn_cpu",
-            "tuning_backend_reason": "sklearn supports class_weight, feature importance, and controlled validation tuning.",
+            "tuning_backend_reason": "sklearn supports class-weighted RandomForest training, which the installed cuML version does not — this is the deciding factor for using CPU as the Churn training backend.",
             "gpu_inference_available": bool(GPU_AVAILABLE),
             "gpu_used_for_this_evaluation": False,
             "model_signal_warning": "⚠️ Model quality note: Accuracy reached 71.18%, but it remains below the all-safe baseline of 76.63%. Churn separability is limited, so balanced metrics and feature signals should be used for honest interpretation." if weak_signal else None,
@@ -1147,7 +1156,7 @@ class ChurnPredictor:
         print("🧠 ChurnPredictor: Training customer-level model with sklearn CPU validation tuning...")
         print(f"Model Version: {CHURN_MODEL_VERSION}")
         print("Tuning Backend: sklearn CPU")
-        print("Reason: sklearn supports class_weight, feature importance, and controlled validation tuning.")
+        print("Reason: sklearn supports class-weighted RandomForest training, which the installed cuML version does not — this is the deciding factor for using CPU as the Churn training backend.")
 
         y = customer_table["actual_churn"].astype(int)
         if y.nunique() < 2:

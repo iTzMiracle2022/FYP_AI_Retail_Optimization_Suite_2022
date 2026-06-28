@@ -535,6 +535,7 @@ def build_ai_behavior_charts_from_snapshot(snapshot_df, filters=None, feature_im
         "ai_risk_by_recency_bucket": [],
         "ai_risk_by_aov_band": [],
         "top_ai_churn_signals": [],
+        "ai_recommended_retention_actions": [],
         "filtered_total_customers": total,
     }
     if filtered.empty:
@@ -648,6 +649,77 @@ def build_ai_behavior_charts_from_snapshot(snapshot_df, filters=None, feature_im
             "explanation": "Higher value means the feature influenced model risk scoring more."
         })
     charts["top_ai_churn_signals"] = top_signals
+
+    # Calculate Recommended Retention Actions for at-risk tiers
+    active_mask = filtered["risk_zone"].isin(["Watchlist", "High Risk", "Highest Available Risk"])
+    at_risk_df = filtered[active_mask].copy()
+    recommended_actions_chart = []
+    if not at_risk_df.empty:
+        try:
+            high_spend_thresh = at_risk_df["total_revenue"].quantile(0.75) if "total_revenue" in at_risk_df.columns else 3000
+            high_recency_thresh = 90
+            high_returns_thresh = 0.10
+            low_freq_thresh = at_risk_df["purchase_frequency"].quantile(0.25) if "purchase_frequency" in at_risk_df.columns else 2
+            low_aov_thresh = at_risk_df["avg_order_value"].quantile(0.25) if "avg_order_value" in at_risk_df.columns else 100
+            
+            actions = []
+            for _, row in at_risk_df.iterrows():
+                risk_zone = row.get("risk_zone")
+                recency = row.get("days_since_last_purchase", 0)
+                freq = row.get("purchase_frequency", 0)
+                returns = row.get("return_rate", 0)
+                aov = row.get("avg_order_value", 0)
+                val = row.get("total_revenue", 0)
+                
+                is_high_risk = risk_zone in ["High Risk", "Highest Available Risk"]
+                
+                if is_high_risk and val >= high_spend_thresh:
+                    act = "VIP retention call"
+                elif recency >= high_recency_thresh:
+                    act = "Win-back reminder"
+                elif returns >= high_returns_thresh:
+                    act = "Support follow-up"
+                elif freq <= low_freq_thresh:
+                    act = "Re-engagement offer"
+                elif aov <= low_aov_thresh:
+                    act = "Personalized discount"
+                else:
+                    act = "Product recommendation"
+                actions.append(act)
+                
+            at_risk_df["recommended_action"] = actions
+            
+            action_stats = at_risk_df.groupby("recommended_action").agg(
+                customer_count=("customer_name", "count"),
+                avg_risk_score=("risk_score_percent", "mean"),
+                avg_recency=("days_since_last_purchase", "mean"),
+                avg_customer_value=("total_revenue", "mean")
+            ).reset_index()
+            
+            next_step_map = {
+                "VIP retention call": "Call high-value accounts directly to offer dedicated support",
+                "Win-back reminder": "Send comeback email or SMS offer",
+                "Support follow-up": "Reach out to resolve product/return issues",
+                "Re-engagement offer": "Send re-engagement bonus or newsletter",
+                "Personalized discount": "Email custom 15% discount code",
+                "Product recommendation": "Send personalized product catalog"
+            }
+            
+            for _, row in action_stats.iterrows():
+                act = row["recommended_action"]
+                recommended_actions_chart.append({
+                    "label": act,
+                    "value": int(row["customer_count"]),
+                    "avg_risk_score": round(float(row["avg_risk_score"]), 1),
+                    "avg_recency": int(round(float(row["avg_recency"]))),
+                    "avg_customer_value": int(round(float(row["avg_customer_value"]))),
+                    "next_step": next_step_map.get(act, "Contact customer")
+                })
+            recommended_actions_chart = sorted(recommended_actions_chart, key=lambda x: x["value"], reverse=True)
+        except Exception as exc:
+            print(f"Warning: Could not build recommended actions chart: {exc}")
+            
+    charts["ai_recommended_retention_actions"] = recommended_actions_chart
     return charts
 
 
@@ -850,6 +922,18 @@ def build_customer_ai_behavior_snapshot(dataset_id, raw_df, customer_summary_df,
     return snapshot_df, charts, metadata, validation, False
 
 def _print_churn_ai_evaluation(dataset_id, predictor, evaluation, label_message, summary, force_retune=False):
+    import textwrap
+
+    def print_wrapped_kv(label, text, indent_width=20, width=80):
+        prefix = f"{label:<{indent_width}} : "
+        lines = textwrap.wrap(str(text), width=width - indent_width - 3)
+        if not lines:
+            print(prefix)
+            return
+        print(f"{prefix}{lines[0]}")
+        for line in lines[1:]:
+            print(f"{' ' * (indent_width + 3)}{line}")
+
     if evaluation:
         is_verbose = (
             os.environ.get("CHURN_VERBOSE_EVAL", "0") == "1"
@@ -858,158 +942,143 @@ def _print_churn_ai_evaluation(dataset_id, predictor, evaluation, label_message,
             or evaluation.get("evaluation_source") != "Cached"
         )
         
-        backend_label = "cuML GPU" if evaluation.get("model_backend") == "cuml_gpu" else "sklearn CPU"
-
         def pct(value):
             return "N/A" if value is None else f"{float(value) * 100:.2f}%"
 
         cm = evaluation.get("confusion_matrix") or {}
         
-        print("================ CHURN AI MODEL SUMMARY ===================")
-        print(f"Dataset: {dataset_id}")
-        print("Mode: LABELED")
-        print(f"Evaluation Source: {evaluation.get('evaluation_source', 'Fresh')}")
-        print(f"Tuning Skipped: {'Yes' if evaluation.get('tuning_skipped') else 'No'}")
-        print(f"Configs Evaluated This Run: {int(evaluation.get('configs_evaluated_this_run') or 0):,}")
-        print(f"Model Version: {evaluation.get('model_version', 'customer_rf_v3_rfm_threshold_cache')}")
-        print("")
-        print("Business KPI Source:")
-        print("AI model predictions aggregated by robust customer key")
-        print("")
-        print("Business KPIs:")
-        print(f"Transactions: {summary['total_transactions']:,}")
-        print(f"Customers: {summary['total_customers']:,}")
-        print(f"Safe Customers: {summary['safe_customers']:,}")
-        print(f"At-Risk Customers: {summary['at_risk_customers']:,}")
-        print(f"Churn Risk: {summary['churn_risk_percentage']:.2f}%")
+        print("\n" + "=" * 80)
+        print(f"║ {'CHURN AI MODEL SUMMARY':^76} ║")
+        print("=" * 80)
+        
+        print("\n─── DATASET INFO ───────────────────────────────────────────────────────────────")
+        print_wrapped_kv("Dataset", dataset_id)
+        print_wrapped_kv("Mode", "LABELED")
+        print_wrapped_kv("Evaluation Source", evaluation.get('evaluation_source', 'Fresh'))
+        print_wrapped_kv("Tuning Skipped", 'Yes' if evaluation.get('tuning_skipped') else 'No')
+        print_wrapped_kv("Configs Evaluated", f"{int(evaluation.get('configs_evaluated_this_run') or 0):,}")
+        print_wrapped_kv("Model Version", evaluation.get('model_version', 'churn-rf-v1.5.0'))
+        
+        print("\n─── BUSINESS KPIs ──────────────────────────────────────────────────────────────")
+        print_wrapped_kv("Transactions", f"{summary['total_transactions']:,}")
+        print_wrapped_kv("Customers", f"{summary['total_customers']:,}")
+        print_wrapped_kv("Safe Customers", f"{summary['safe_customers']:,}")
+        print_wrapped_kv("At-Risk Customers", f"{summary['at_risk_customers']:,}")
+        print_wrapped_kv("Churn Risk", f"{summary['churn_risk_percentage']:.2f}%")
         if summary.get("model_agreement_rate") is not None:
-            print(f"Model Agreement Rate: {float(summary['model_agreement_rate']):.2f}%")
-            print(f"Historical Safe Customers: {int(summary.get('historical_safe_customers') or 0):,}")
-            print(f"Historical At-Risk Customers: {int(summary.get('historical_at_risk_customers') or 0):,}")
-        print("")
-        print("AI Model:")
-        print("Level: Customer-level")
-        print("Model: Random Forest Classifier")
+            print_wrapped_kv("Model Agreement", f"{float(summary['model_agreement_rate']):.2f}%")
+            print_wrapped_kv("Hist. Safe Cust", f"{int(summary.get('historical_safe_customers') or 0):,}")
+            print_wrapped_kv("Hist. At-Risk Cust", f"{int(summary.get('historical_at_risk_customers') or 0):,}")
+            
+        print("\n─── AI MODEL & BACKEND INFO ────────────────────────────────────────────────────")
+        print_wrapped_kv("Level", "Customer-level")
+        print_wrapped_kv("Model", "Random Forest Classifier")
         if evaluation.get("model_backend") == "cuml_gpu":
-            print("Evaluation Backend: cuML GPU")
-            print("GPU Used: Yes")
+            print_wrapped_kv("Backend", "cuML GPU")
+            print_wrapped_kv("GPU Used", "Yes")
         else:
-            print("Evaluation Backend: sklearn CPU")
-            print("Reason: sklearn supports class weights, feature importance, and controlled validation tuning.")
-            print("GPU Status: Available for compatible RAPIDS operations; not used for sklearn cached evaluation.")
-            print("CPU Fallback: No, sklearn CPU was intentionally used for validation/tuning.")
+            print_wrapped_kv("Backend", "sklearn CPU")
+            print_wrapped_kv("Reason", "sklearn supports class-weighted RandomForest training, which the installed cuML version does not — this is the deciding factor for using CPU as the Churn training backend.")
+            print_wrapped_kv("GPU Status", "RAPIDS/cuML installed and detected, but not used for Churn — the current implementation requires sklearn's class-weighted RandomForest, which cuML does not support. CPU is the active, validated backend for Churn.")
+            print_wrapped_kv("CPU Fallback", "No, sklearn CPU is the designated, fully-functional training path for Churn (GPU path is unsupported due to class-weight mismatch).")
         
         if is_verbose:
-            print("")
-            print("--- VERBOSE EVALUATION DETAILS ---")
-            print(f"Tuning Backend: {evaluation.get('tuning_backend', 'sklearn_cpu').replace('_', ' ')}")
-            print(f"GPU Attempted: {'Yes' if evaluation.get('gpu_attempted') else 'No'}")
-            print(f"Fallback Used: {'Yes' if evaluation.get('fallback_used') else 'No'}")
-            print("")
-            print("Target:")
-            print("actual_churn = max(Churn) per robust customer key")
-            print("")
-            print("Split:")
-            print(f"Train Customers: {int(evaluation.get('train_size') or 0):,}")
-            print(f"Validation Customers: {int(evaluation.get('validation_size') or 0):,}")
-            print(f"Test Customers: {int(evaluation.get('test_size') or 0):,}")
-            print(f"Train Positive Rate: {pct(evaluation.get('train_positive_rate'))}")
-            print(f"Validation Positive Rate: {pct(evaluation.get('validation_positive_rate'))}")
-            print(f"Test Positive Rate: {pct(evaluation.get('test_positive_rate'))}")
-            print("")
-            print("Baseline:")
-            print(f"All-Safe Accuracy: {pct(evaluation.get('all_safe_accuracy'))}")
-            print(f"All-Safe F1: {pct(evaluation.get('all_safe_f1_score'))}")
-            print(f"All-Safe Balanced Accuracy: {pct(evaluation.get('all_safe_balanced_accuracy'))}")
-            print(f"All-At-Risk Accuracy: {pct(evaluation.get('all_at_risk_accuracy'))}")
-            print(f"All-At-Risk F1: {pct(evaluation.get('all_at_risk_f1_score'))}")
-            print(f"All-At-Risk Balanced Accuracy: {pct(evaluation.get('all_at_risk_balanced_accuracy'))}")
-            print("Model is useful only if it improves beyond majority-class baseline on balanced metrics.")
-            print("")
-            print("Selected Model Config:")
-            print(evaluation.get("selected_model_config"))
-            print(f"Model Configs Evaluated: {int(evaluation.get('model_configs_evaluated') or 0):,}")
-            print("")
-            print(f"Selected Threshold: {float(evaluation.get('selected_threshold') or 0):.4f}")
-            print(f"Threshold Selection Method: {evaluation.get('threshold_selection_method')}")
-            print(f"Threshold Guardrails Applied: {'Yes' if evaluation.get('threshold_guardrails_applied') else 'No'}")
-            print(f"Rejected Threshold Count: {int(evaluation.get('rejected_threshold_count') or 0):,}")
-            print(f"Selected Threshold Reason: {evaluation.get('selected_threshold_reason')}")
-            print(f"Validation Actual Positive Rate: {pct(evaluation.get('validation_actual_positive_rate'))}")
-            print(f"Validation Predicted Positive Rate: {pct(evaluation.get('validation_predicted_positive_rate'))}")
-            print(f"Predicted Positive Rate: {pct(evaluation.get('predicted_positive_rate'))}")
+            print("\n─── VERBOSE EVALUATION DETAILS ─────────────────────────────────────────────────")
+            print_wrapped_kv("Tuning Backend", evaluation.get('tuning_backend', 'sklearn_cpu').replace('_', ' '))
+            print_wrapped_kv("GPU Attempted", 'Yes' if evaluation.get('gpu_attempted') else 'No')
+            print_wrapped_kv("Fallback Used", 'Yes' if evaluation.get('fallback_used') else 'No')
+            print_wrapped_kv("Target", "actual_churn = max(Churn) per robust customer key")
+            print_wrapped_kv("Train Size", f"{int(evaluation.get('train_size') or 0):,}")
+            print_wrapped_kv("Validation Size", f"{int(evaluation.get('validation_size') or 0):,}")
+            print_wrapped_kv("Test Size", f"{int(evaluation.get('test_size') or 0):,}")
+            print_wrapped_kv("Train Pos Rate", pct(evaluation.get('train_positive_rate')))
+            print_wrapped_kv("Val Pos Rate", pct(evaluation.get('validation_positive_rate')))
+            print_wrapped_kv("Test Pos Rate", pct(evaluation.get('test_positive_rate')))
+            
+            print("\n─── BASELINE METRICS ───────────────────────────────────────────────────────────")
+            print_wrapped_kv("All-Safe Acc", pct(evaluation.get('all_safe_accuracy')))
+            print_wrapped_kv("All-Safe F1", pct(evaluation.get('all_safe_f1_score')))
+            print_wrapped_kv("All-Safe Bal Acc", pct(evaluation.get('all_safe_balanced_accuracy')))
+            print_wrapped_kv("All-At-Risk Acc", pct(evaluation.get('all_at_risk_accuracy')))
+            print_wrapped_kv("All-At-Risk F1", pct(evaluation.get('all_at_risk_f1_score')))
+            print_wrapped_kv("All-At-Risk BalAcc", pct(evaluation.get('all_at_risk_balanced_accuracy')))
+            print("Note: Model is useful only if it improves beyond majority-class baseline on balanced metrics.")
+            
+            print("\n─── MODEL CONFIG ───────────────────────────────────────────────────────────────")
+            print_wrapped_kv("Selected Config", str(evaluation.get("selected_model_config")))
+            print_wrapped_kv("Configs Evaluated", f"{int(evaluation.get('model_configs_evaluated') or 0):,}")
+            print_wrapped_kv("Threshold", f"{float(evaluation.get('selected_threshold') or 0):.4f}")
+            print_wrapped_kv("Selection Method", evaluation.get('threshold_selection_method'))
+            print_wrapped_kv("Guardrails Applied", 'Yes' if evaluation.get('threshold_guardrails_applied') else 'No')
+            print_wrapped_kv("Rejected Thresholds", f"{int(evaluation.get('rejected_threshold_count') or 0):,}")
+            print_wrapped_kv("Selection Reason", evaluation.get('selected_threshold_reason'))
+            print_wrapped_kv("Val Actual PosRate", pct(evaluation.get('validation_actual_positive_rate')))
+            print_wrapped_kv("Val Pred PosRate", pct(evaluation.get('validation_predicted_positive_rate')))
+            print_wrapped_kv("Pred Pos Rate", pct(evaluation.get('predicted_positive_rate')))
 
-        print("")
-        metric_title = "Cached Test Metrics:" if evaluation.get("evaluation_source") == "Cached" else "Test Metrics:"
-        print(metric_title)
-        print(f"Accuracy: {pct(evaluation.get('accuracy'))}")
-        print(f"Precision: {pct(evaluation.get('precision'))}")
-        print(f"Recall: {pct(evaluation.get('recall'))}")
-        print(f"F1 Score: {pct(evaluation.get('f1_score'))}")
-        print(f"Specificity: {pct(evaluation.get('specificity'))}")
-        print(f"Balanced Accuracy: {pct(evaluation.get('balanced_accuracy'))}")
-        print(f"ROC-AUC: {pct(evaluation.get('roc_auc')) if evaluation.get('roc_auc') is not None else 'N/A'}")
-        print(f"PR-AUC: {pct(evaluation.get('pr_auc')) if evaluation.get('pr_auc') is not None else 'N/A'}")
-        print("")
-        print("Confusion Matrix:")
-        print(f"TP: {cm.get('true_positive', 0):,} | FP: {cm.get('false_positive', 0):,} | TN: {cm.get('true_negative', 0):,} | FN: {cm.get('false_negative', 0):,}")
-        print("")
-        
-        print("Top AI Churn Signals:")
+        print("\n─── MODEL PERFORMANCE ──────────────────────────────────────────────────────────")
+        metric_title = "Cached Test Metrics" if evaluation.get("evaluation_source") == "Cached" else "Test Metrics"
+        print_wrapped_kv("Metrics Type", metric_title)
+        print_wrapped_kv("Accuracy", pct(evaluation.get('accuracy')))
+        print_wrapped_kv("Precision", pct(evaluation.get('precision')))
+        print_wrapped_kv("Recall", pct(evaluation.get('recall')))
+        print_wrapped_kv("F1 Score", pct(evaluation.get('f1_score')))
+        print_wrapped_kv("Specificity", pct(evaluation.get('specificity')))
+        print_wrapped_kv("Balanced Accuracy", pct(evaluation.get('balanced_accuracy')))
+        print_wrapped_kv("ROC-AUC", pct(evaluation.get('roc_auc')) if evaluation.get('roc_auc') is not None else 'N/A')
+        print_wrapped_kv("PR-AUC", pct(evaluation.get('pr_auc')) if evaluation.get('pr_auc') is not None else 'N/A')
+        print_wrapped_kv("Confusion Matrix", f"TP: {cm.get('true_positive', 0):,} | FP: {cm.get('false_positive', 0):,} | TN: {cm.get('true_negative', 0):,} | FN: {cm.get('false_negative', 0):,}")
+
+        print("\n─── TOP CHURN SIGNALS ──────────────────────────────────────────────────────────")
         for idx, item in enumerate((evaluation.get("top_feature_importances") or [])[:5], start=1):
-            print(f"{idx}. {item.get('feature')}: {float(item.get('importance') or 0):.6f}")
-        print("")
+            print(f"{idx}. {item.get('feature'):<30} : {float(item.get('importance') or 0):.6f}")
         
         if is_verbose:
-            print(f"Features Used: {evaluation.get('input_feature_count', 0)}")
-            for feature in evaluation.get("semantic_features_used") or evaluation.get("features_used") or []:
-                print(f"- {feature}")
-            print("")
-            print("Prediction Counts:")
-            print(f"Actual Positive: {int(evaluation.get('actual_positive_count') or 0):,}")
-            print(f"Predicted Positive: {int(evaluation.get('predicted_positive_count') or 0):,}")
-            print(f"Actual Positive Rate: {pct(evaluation.get('actual_positive_rate'))}")
-            print(f"Predicted Positive Rate: {pct(evaluation.get('predicted_positive_rate'))}")
-            print("")
+            print("\n─── DETAILED FEATURES & PROBABILITIES ──────────────────────────────────────────")
+            print_wrapped_kv("Features Count", str(evaluation.get('input_feature_count', 0)))
+            print_wrapped_kv("Features List", ", ".join(evaluation.get("semantic_features_used") or evaluation.get("features_used") or []))
+            print_wrapped_kv("Actual Pos Count", f"{int(evaluation.get('actual_positive_count') or 0):,}")
+            print_wrapped_kv("Pred Pos Count", f"{int(evaluation.get('predicted_positive_count') or 0):,}")
+            print_wrapped_kv("Actual Pos Rate", pct(evaluation.get('actual_positive_rate')))
+            print_wrapped_kv("Pred Pos Rate", pct(evaluation.get('predicted_positive_rate')))
             diagnostics = evaluation.get("probability_diagnostics") or {}
             overall_q = diagnostics.get("overall_quantiles") or {}
             churn_q = diagnostics.get("churn_quantiles") or {}
             fmt = lambda v: "N/A" if v is None else f"{float(v):.4f}"
-            print("Probability Diagnostics:")
-            print(f"Mean Probability - Actual Safe: {fmt(diagnostics.get('mean_probability_actual_safe'))}")
-            print(f"Mean Probability - Actual Churn: {fmt(diagnostics.get('mean_probability_actual_churn'))}")
-            print(f"Overall P50/P75/P90: {fmt(overall_q.get('p50'))} / {fmt(overall_q.get('p75'))} / {fmt(overall_q.get('p90'))}")
-            print(f"Churn P50/P75/P90: {fmt(churn_q.get('p50'))} / {fmt(churn_q.get('p75'))} / {fmt(churn_q.get('p90'))}")
-            print("")
-            print("Warning:")
+            print_wrapped_kv("Mean Prob (Safe)", fmt(diagnostics.get('mean_probability_actual_safe')))
+            print_wrapped_kv("Mean Prob (Churn)", fmt(diagnostics.get('mean_probability_actual_churn')))
+            print_wrapped_kv("Overall Quantiles", f"P50: {fmt(overall_q.get('p50'))} | P75: {fmt(overall_q.get('p75'))} | P90: {fmt(overall_q.get('p90'))}")
+            print_wrapped_kv("Churn Quantiles", f"P50: {fmt(churn_q.get('p50'))} | P75: {fmt(churn_q.get('p75'))} | P90: {fmt(churn_q.get('p90'))}")
             if evaluation.get("model_signal_warning"):
-                print(evaluation["model_signal_warning"])
+                print_wrapped_kv("Signal Warning", evaluation["model_signal_warning"])
             if evaluation.get("degenerate_prediction_warning"):
-                print(evaluation["degenerate_prediction_warning"])
-            print("")
+                print_wrapped_kv("Degen Warning", evaluation["degenerate_prediction_warning"])
         else:
-            print(f"Features Used: {evaluation.get('input_feature_count', 0)} customer-level behavior/RFM features")
-            print("")
+            print_wrapped_kv("Features Used", f"{evaluation.get('input_feature_count', 0)} customer-level behavior/RFM features")
 
-        print("Model Note:")
-        print(f"Accuracy is {pct(evaluation.get('accuracy'))}, but all-safe baseline is {pct(evaluation.get('all_safe_accuracy'))}. Use recall, F1, balanced accuracy, ROC-AUC, and feature signals to explain model quality honestly.")
-        print("")
-        print("Important:")
-        print("Dashboard KPIs use AI model predictions.")
-        print("Historical labels remain visible for comparison when available.")
-        print("===========================================================")
+        print("\n─── MODEL NOTES & GUARDRAILS ───────────────────────────────────────────────────")
+        print_wrapped_kv("Performance Note", f"Accuracy is {pct(evaluation.get('accuracy'))}, but all-safe baseline is {pct(evaluation.get('all_safe_accuracy'))}. Use recall, F1, balanced accuracy, ROC-AUC, and feature signals to explain model quality honestly.")
+        print_wrapped_kv("KPI Guidelines", "Dashboard KPIs use AI model predictions. Historical labels remain visible for comparison when available.")
+        
+        print("=" * 80 + "\n")
         return
 
-    print("================ CHURN AI MODEL STATUS ====================")
-    print(f"Dataset: {dataset_id}")
-    print("Mode: UNLABELED")
-    print("Actual Churn Label: Not found")
-    print("Model Evaluation: Not available")
-    print("Reason: Accuracy/Precision/Recall/F1 cannot be calculated without ground-truth Churn labels.")
-    print("Action: Using saved model inference or behavior-based risk scoring.")
+    # Unlabeled mode formatting
+    print("\n" + "=" * 80)
+    print(f"║ {'CHURN AI MODEL STATUS (UNLABELED)':^76} ║")
+    print("=" * 80)
+    print("\n─── DATASET INFO ───────────────────────────────────────────────────────────────")
+    print_wrapped_kv("Dataset", dataset_id)
+    print_wrapped_kv("Mode", "UNLABELED")
+    print_wrapped_kv("Actual Churn Label", "Not found")
+    print_wrapped_kv("Model Evaluation", "Not available")
+    
+    print("\n─── STATUS INFO ────────────────────────────────────────────────────────────────")
+    print_wrapped_kv("Reason", "Accuracy/Precision/Recall/F1 cannot be calculated without ground-truth Churn labels.")
+    print_wrapped_kv("Action", "Using saved model inference or behavior-based risk scoring.")
     if label_message:
-        print(f"Details: {label_message}")
-    print("===========================================================")
+        print_wrapped_kv("Details", label_message)
+    print("=" * 80 + "\n")
 
 
 @churn_bp.route('/predict', methods=['POST'])
@@ -1028,11 +1097,12 @@ def predict_churn():
     user_email = data.get('email')
     requester_role = request.headers.get('X-User-Role')
     print(f"[DEBUG] Churn Predict - user_email: {user_email}, requester_role: {requester_role}", flush=True)
-    dataset_owner_email = None if requester_role and requester_role.lower() in ['manager', 'system admin'] else user_email
+    dataset_owner_email = None if requester_role and requester_role.lower() in ['manager', 'system admin', 'analyst', 'viewer'] else user_email
     db.get_dataset_info(dataset_id, dataset_owner_email)
 
     import time
     t_start = time.perf_counter()
+    timings = []
 
     # Load file
     df = loader.load_csv(dataset_id)
@@ -1042,7 +1112,7 @@ def predict_churn():
         and any(col in df.columns for col in ["Total Purchase Amount", "Purchase Date", "Quantity", "Returns", "Product Category", "Payment Method"])
     )
     t_load = time.perf_counter()
-    print(f"[CHURN TIMING] load dataset: {t_load - t_start:.4f} sec")
+    timings.append(("Load Dataset", f"{t_load - t_start:.4f} sec"))
 
     force_retune = bool(data.get('force_retrain') or data.get('force_retune'))
     dashboard_cache = None
@@ -1058,6 +1128,9 @@ def predict_churn():
         and not include_customer_transactions
     )
 
+    if requester_role == 'Viewer' and force_retune:
+        return jsonify({'success': False, 'message': 'Unauthorized. Viewers cannot trigger model retraining.'}), 403
+
     if fast_dashboard_response:
         ai_model_evaluation = dict(cached_model_metadata.get("ai_model_evaluation") or {})
         ai_model_evaluation["evaluation_source"] = "Cached"
@@ -1070,9 +1143,9 @@ def predict_churn():
         predictions_df = pd.DataFrame()
         merged_df = None
         t_pred = time.perf_counter()
-        print(f"[CHURN TIMING] cached dashboard/model metadata: {t_pred - t_load:.4f} sec")
+        timings.append(("Cached Metadata Load", f"{t_pred - t_load:.4f} sec"))
         t_merge = t_pred
-        print("[CHURN TIMING] merge predictions: skipped (cached dashboard response)")
+        timings.append(("Merge Predictions", "Skipped (Cached Dashboard)"))
     else:
         # Preserve original index for safe merging
         df['_source_index'] = df.index
@@ -1086,7 +1159,7 @@ def predict_churn():
         label_message = predictor.label_message
         t_pred = time.perf_counter()
         action = "model tuning/training/evaluation" if force_retune or ai_model_evaluation.get("evaluation_source") != "Cached" else "cached model load/evaluation"
-        print(f"[CHURN TIMING] {action}: {t_pred - t_load:.4f} sec")
+        timings.append(("Model Execution", f"{t_pred - t_load:.4f} sec ({action})"))
 
         # Merge predictions back to original df using source index
         merged_df = df.copy()
@@ -1126,7 +1199,7 @@ def predict_churn():
             merged_df["model_predicted_churn"] = merged_df["churn_prediction"]
         merged_df["_customer_key"] = predictor._customer_keys(merged_df).reset_index(drop=True)
         t_merge = time.perf_counter()
-        print(f"[CHURN TIMING] merge predictions: {t_merge - t_pred:.4f} sec")
+        timings.append(("Merge Predictions", f"{t_merge - t_pred:.4f} sec"))
 
     if dashboard_cache:
         customer_summary_df = dashboard_cache["customer_summary_df"]
@@ -1150,10 +1223,35 @@ def predict_churn():
             _save_customer_dashboard_cache(dataset_id, df, has_actual_churn_label, dashboard_payload)
 
     t_agg = time.perf_counter()
-    print(f"[CHURN TIMING] customer aggregation: {t_agg - t_merge:.4f} sec")
+    timings.append(("Customer Aggregation", f"{t_agg - t_merge:.4f} sec"))
     total_transactions = summary["total_transactions"]
     at_risk_customers = summary["at_risk_customers"]
     safe_customers = summary["safe_customers"]
+
+    # --- Generate AI Behavioral Churn Signals from customer-level model snapshot ---
+    ai_behavior_snapshot_df, ai_behavior_charts, ai_behavior_metadata, ai_behavior_validation, ai_behavior_cache_hit = build_customer_ai_behavior_snapshot(
+        dataset_id=dataset_id,
+        raw_df=df,
+        customer_summary_df=customer_summary_df,
+        churn_predictor=predictor,
+        force_retune=force_retune,
+    )
+    
+    # Process AI churn analysis early for saving
+    risk_zone_counts = ai_behavior_snapshot_df.get("risk_zone", pd.Series(dtype=str)).apply(_risk_zone_label).value_counts().to_dict()
+    ai_churn_analysis = {
+        "summary": None,
+        "source": "saved_customer_level_ai_behavior_snapshot",
+        "metadata": ai_behavior_metadata,
+        "validation": ai_behavior_validation,
+        "cache_hit": ai_behavior_cache_hit,
+        "ai_predicted_risk_distribution": [
+            {"zone": zone, "count": int(risk_zone_counts.get(zone, 0))}
+            for zone in RISK_ZONE_ORDER
+            if risk_zone_counts.get(zone, 0) > 0
+        ],
+        **ai_behavior_charts,
+    }
 
     prediction_id = None
     if dashboard_cache and not force_retune:
@@ -1174,7 +1272,16 @@ def predict_churn():
                     # Update predictions generated_date to now
                     db.predictions.update_one({"_id": latest_prediction["_id"]}, {"$set": {"generated_date": datetime.now()}})
                     # Track report entry and insert into analysis_runs
-                    db._save_report(dataset_id, 'churn', user_email=user_email, churn_prediction_id=prediction_id)
+                    db._save_report(
+                        dataset_id, 
+                        'churn', 
+                        user_email=user_email, 
+                        churn_prediction_id=prediction_id,
+                        charts={
+                            'risk_distribution': chart_data.get('risk_distribution', []),
+                            'ai_predicted_risk_distribution': ai_behavior_charts.get('ai_predicted_risk_distribution', [])
+                        }
+                    )
                     print(f"✅ Reused and updated cached churn prediction record: {prediction_id}")
                 else:
                     print(f"⚠️ Churn prediction file missing or empty on disk: {file_path}. Invalidating cache and re-running.")
@@ -1188,7 +1295,9 @@ def predict_churn():
             user_email=user_email,
             predictions=predictions_df,
             accuracy=model_accuracy,
-            using_gpu=predictor.using_gpu
+            using_gpu=predictor.using_gpu,
+            risk_distribution=chart_data.get('risk_distribution', []),
+            ai_predicted_risk_distribution=ai_behavior_charts.get('ai_predicted_risk_distribution', [])
         )
 
     # ── Identify Top 5 Critical Alerts (using customer summary)
@@ -1220,7 +1329,7 @@ def predict_churn():
         display_df = predictions_df
 
     t_build = time.perf_counter()
-    print(f"[CHURN TIMING] response core prep: {t_build - t_agg:.4f} sec")
+    timings.append(("Response Core Prep", f"{t_build - t_agg:.4f} sec"))
     
     _print_churn_ai_evaluation(dataset_id, predictor, ai_model_evaluation, label_message, summary, force_retune)
 
@@ -1233,7 +1342,7 @@ def predict_churn():
         force_retune=force_retune,
     )
     t_ai_snapshot = time.perf_counter()
-    print(f"[CHURN TIMING] AI behavior snapshot/cache: {t_ai_snapshot - t_build:.4f} sec")
+    timings.append(("AI Behavior Snapshot", f"{t_ai_snapshot - t_build:.4f} sec"))
     risk_zone_counts = ai_behavior_snapshot_df.get("risk_zone", pd.Series(dtype=str)).apply(_risk_zone_label).value_counts().to_dict()
     risk_zone_options = [
         zone for zone in RISK_ZONE_ORDER
@@ -1329,8 +1438,15 @@ def predict_churn():
     response_model_backend = (cached_model_metadata or {}).get("model_backend") or predictor.model_backend
     response_using_gpu = response_model_backend == "cuml_gpu"
     t_payload = time.perf_counter()
-    print(f"[CHURN TIMING] response payload prep: {t_payload - t_ai_snapshot:.4f} sec")
-    print(f"[CHURN TIMING] total route time: {t_payload - t_start:.4f} sec")
+    timings.append(("Response Payload Prep", f"{t_payload - t_ai_snapshot:.4f} sec"))
+    timings.append(("Total Route Time", f"{t_payload - t_start:.4f} sec"))
+
+    print("\n" + "=" * 80)
+    print(f"║ {'CHURN PERFORMANCE TIMINGS':^76} ║")
+    print("=" * 80)
+    for label, val in timings:
+        print(f"{label:<25} : {val}")
+    print("=" * 80 + "\n")
 
     return jsonify({
         'success': True,

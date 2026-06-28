@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { CheckCircle, AlertCircle, Loader2 } from 'lucide-react';
-import axios from 'axios';
+import API from '../api';
 
 const VerifyEmail = () => {
     const { token } = useParams();
@@ -11,8 +11,8 @@ const VerifyEmail = () => {
     useEffect(() => {
         const verify = async () => {
             try {
-                const res = await axios.get(`/api/users/verify/${token}`);
-                if (res.data.success) {
+                const res = await API.get(`/users/verify/${token}`);
+                if (res.success) {
                     setStatus('success');
                     setTimeout(() => navigate('/login'), 4000);
                 }

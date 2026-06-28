@@ -140,7 +140,8 @@ function getShortLabel(title, name) {
     if (name.includes("Safe")) shortName = "Safe";
     if (name.includes("Low")) shortName = "Low Risk";
     if (name.includes("Watch")) shortName = "Watchlist";
-    if (name.includes("High") || name.includes("At Risk") || name.includes("At-Risk")) shortName = "High Risk";
+    if (name.includes("Highest Available")) shortName = "Highest Available Risk";
+    else if (name.includes("High") || name.includes("At Risk") || name.includes("At-Risk")) shortName = "High Risk";
   }
   if (title.includes("Marketing") || title.includes("Audience")) {
     if (name.includes("At Risk") || name.includes("At-Risk")) shortName = "Needs Attention";
@@ -163,6 +164,7 @@ function getSnapshotColor(title, name) {
   if (title.includes("Churn") || title.includes("Retention")) {
     if (normalized.includes("safe") || normalized.includes("low")) return "#10B981";
     if (normalized.includes("watchlist") || normalized.includes("watch")) return "#F59E0B";
+    if (normalized.includes("highest available")) return "#F97316"; // distinct color for Highest Available Risk
     if (normalized.includes("risk") || normalized.includes("high")) return "#EF4444";
   }
   

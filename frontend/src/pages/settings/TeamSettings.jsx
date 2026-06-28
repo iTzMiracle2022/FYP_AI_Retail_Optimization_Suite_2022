@@ -3,7 +3,7 @@ import Navbar from '../../components/common/Navbar';
 import { Users, Mail, ArrowLeft, CheckCircle, AlertCircle, X, Check, Shield } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
-import axios from 'axios';
+import API from '../../api';
 
 const TeamSettings = () => {
   const { user } = useAuth();
@@ -17,9 +17,19 @@ const TeamSettings = () => {
   const [newUser, setNewUser] = useState({ name: '', email: '', role: 'Analyst' });
   const [activeTab, setActiveTab] = useState('members'); // 'members' or 'approvals'
 
+  const getAvailableRoles = () => {
+    if (user?.role === 'System Admin') {
+      return ['Manager', 'Analyst', 'Viewer'];
+    }
+    if (user?.role === 'Manager') {
+      return ['Analyst', 'Viewer'];
+    }
+    return ['Viewer'];
+  };
+
   useEffect(() => {
     fetchUsers();
-    if (user?.role === 'Manager') {
+    if (user?.role === 'Manager' || user?.role === 'System Admin') {
       fetchApprovals();
     }
   }, [user]);
@@ -28,9 +38,9 @@ const TeamSettings = () => {
     setLoadingUsers(true);
     setStatusMsg(null);
     try {
-      const res = await axios.get('/api/users', { params: { _t: Date.now() } }); 
-      if (res.data.success) {
-        setUsersList(res.data.users);
+      const res = await API.get('/users', { params: { _t: Date.now() } }); 
+      if (res.success) {
+        setUsersList(res.users);
       }
     } catch (err) {
       console.error("Failed to fetch users", err);
@@ -42,11 +52,11 @@ const TeamSettings = () => {
   const fetchApprovals = async () => {
     setLoadingApprovals(true);
     try {
-      const res = await axios.get('/api/users/approvals', {
+      const res = await API.get('/users/approvals', {
         headers: { 'X-User-Email': user?.email, 'X-User-Role': user?.role }
       });
-      if (res.data.success) {
-        setApprovals(res.data.approvals);
+      if (res.success) {
+        setApprovals(res.approvals);
       }
     } catch (err) {
       console.error("Failed to fetch approvals", err);
@@ -60,12 +70,12 @@ const TeamSettings = () => {
       return;
     }
     try {
-      const res = await axios.post('/api/users/add', newUser, {
+      const res = await API.post('/users/add', newUser, {
         headers: { 'X-User-Email': user?.email, 'X-User-Role': user?.role }
       });
-      if (res.data.success) {
-        if (res.data.pending) {
-            setStatusMsg({ type: 'success', text: res.data.message });
+      if (res.success) {
+        if (res.pending) {
+            setStatusMsg({ type: 'success', text: res.message });
         } else {
             setStatusMsg({ type: 'success', text: `Added ${newUser.name} to the team!` });
         }
@@ -73,10 +83,10 @@ const TeamSettings = () => {
         setIsAdding(false);
         fetchUsers();
       } else {
-        setStatusMsg({ type: 'error', text: res.data.message || "Failed to add user." });
+        setStatusMsg({ type: 'error', text: res.message || "Failed to add user." });
       }
     } catch (err) {
-      setStatusMsg({ type: 'error', text: err.response?.data?.message || "Failed to add user. Email may already exist." });
+      setStatusMsg({ type: 'error', text: err || "Failed to add user. Email may already exist." });
     }
   };
 
@@ -88,12 +98,12 @@ const TeamSettings = () => {
     if (!window.confirm(`Are you sure you want to remove ${email}?`)) return;
 
     try {
-      const res = await axios.delete(`/api/users/${email}`, {
+      const res = await API.delete(`/users/${email}`, {
         headers: { 'X-User-Email': user?.email, 'X-User-Role': user?.role }
       });
-      if (res.data.success) {
-        if (res.data.pending) {
-            setStatusMsg({ type: 'success', text: res.data.message });
+      if (res.success) {
+        if (res.pending) {
+            setStatusMsg({ type: 'success', text: res.message });
         } else {
             setStatusMsg({ type: 'success', text: `Removed ${email} from the team.` });
         }
@@ -106,10 +116,10 @@ const TeamSettings = () => {
 
   const handleApprove = async (request_id) => {
     try {
-      const res = await axios.post('/api/users/approve', { request_id }, {
+      const res = await API.post('/users/approve', { request_id }, {
         headers: { 'X-User-Email': user?.email, 'X-User-Role': user?.role }
       });
-      if (res.data.success) {
+      if (res.success) {
         setStatusMsg({ type: 'success', text: "Request approved." });
         fetchApprovals();
         fetchUsers();
@@ -121,10 +131,10 @@ const TeamSettings = () => {
 
   const handleReject = async (request_id) => {
     try {
-      const res = await axios.post('/api/users/reject', { request_id }, {
+      const res = await API.post('/users/reject', { request_id }, {
         headers: { 'X-User-Email': user?.email, 'X-User-Role': user?.role }
       });
-      if (res.data.success) {
+      if (res.success) {
         setStatusMsg({ type: 'success', text: "Request rejected." });
         fetchApprovals();
       }
@@ -143,7 +153,7 @@ const TeamSettings = () => {
             <ArrowLeft size={16} /> Back to Settings
           </Link>
 
-          {user?.role === 'Manager' && (
+          {(user?.role === 'Manager' || user?.role === 'System Admin') && (
               <div style={{ display: 'flex', gap: '1rem', background: 'var(--bg-card)', padding: '4px', borderRadius: '8px', border: '1px solid var(--border)' }}>
                   <button onClick={() => setActiveTab('members')} style={{ padding: '6px 12px', background: activeTab === 'members' ? 'var(--primary)' : 'transparent', color: activeTab === 'members' ? '#fff' : 'var(--text-light)', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 600, fontSize: '0.8rem' }}>Members</button>
                   <button onClick={() => setActiveTab('approvals')} style={{ padding: '6px 12px', background: activeTab === 'approvals' ? 'var(--primary)' : 'transparent', color: activeTab === 'approvals' ? '#fff' : 'var(--text-light)', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 600, fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '6px' }}>
@@ -168,7 +178,18 @@ const TeamSettings = () => {
         )}
 
         {activeTab === 'members' ? (
-        <div className="premium-card">
+        <div style={{
+          padding: '1.75rem', borderRadius: '24px', background: 'var(--bg-card)',
+          border: '1px solid var(--border)', boxShadow: '0 4px 24px rgba(15, 23, 42, 0.05)',
+          transition: 'border-color 0.2s'
+        }}
+          onMouseEnter={e => {
+            e.currentTarget.style.borderColor = '#000000';
+          }}
+          onMouseLeave={e => {
+            e.currentTarget.style.borderColor = 'var(--border)';
+          }}
+        >
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.5rem', borderBottom: '1px solid var(--border)', paddingBottom: '1.5rem' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
               <div style={{ width: 40, height: 40, borderRadius: '10px', background: '#F0F4FF', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -217,9 +238,9 @@ const TeamSettings = () => {
                       onChange={(e) => setNewUser({...newUser, role: e.target.value})}
                       style={{ width: '100%', background: 'rgba(168, 85, 247, 0.1)', border: '1px solid rgba(168, 85, 247, 0.2)', borderRadius: '10px', padding: '0.75rem 1rem', color: '#a855f7', cursor: 'pointer' }}
                     >
-                      <option value="System Admin">System Admin</option>
-                      <option value="Analyst">Analyst</option>
-                      <option value="Viewer">Viewer</option>
+                      {getAvailableRoles().map(r => (
+                        <option key={r} value={r} style={{ background: 'var(--bg-card)' }}>{r}</option>
+                      ))}
                     </select>
                   </div>
                   <div style={{ display: 'flex', gap: '0.75rem' }}>
@@ -256,7 +277,7 @@ const TeamSettings = () => {
                       <span style={{ color: '#10B981', fontSize: '0.8rem', fontWeight: 600 }}>{u.is_verified ? 'Active' : 'Invited'}</span>
                     </td>
                     <td style={{ padding: '16px 0', textAlign: 'right' }}>
-                       {u.email !== user?.email && (
+                       {u.email !== user?.email && !(user?.role === 'Manager' && u.role === 'System Admin') && (
                          <button 
                            onClick={() => handleDeleteUser(u.email)}
                            title="Remove User"
@@ -284,7 +305,18 @@ const TeamSettings = () => {
           </table>
         </div>
         ) : (
-            <div className="premium-card">
+            <div style={{
+              padding: '1.75rem', borderRadius: '24px', background: 'var(--bg-card)',
+              border: '1px solid var(--border)', boxShadow: '0 4px 24px rgba(15, 23, 42, 0.05)',
+              transition: 'border-color 0.2s'
+            }}
+              onMouseEnter={e => {
+                e.currentTarget.style.borderColor = '#000000';
+              }}
+              onMouseLeave={e => {
+                e.currentTarget.style.borderColor = 'var(--border)';
+              }}
+            >
               <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '1.5rem', borderBottom: '1px solid var(--border)', paddingBottom: '1.5rem' }}>
                 <div style={{ width: 40, height: 40, borderRadius: '10px', background: 'rgba(245, 158, 11, 0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                   <Shield size={20} color="#f59e0b" />

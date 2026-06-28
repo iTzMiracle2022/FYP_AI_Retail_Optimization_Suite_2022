@@ -250,6 +250,14 @@ const AIBehaviorTooltip = ({ active, payload, label, type }) => {
     signal: [
       ['Signal', rowLabel],
       ['Influence', Number(data.value || 0).toFixed(4)]
+    ],
+    retentionAction: [
+      ['Action', rowLabel],
+      ['Customers', formatNumber(data.value)],
+      ['Avg Risk Score', data.avg_risk_score != null ? `${data.avg_risk_score}%` : '—'],
+      ['Avg Recency', data.avg_recency != null ? `${data.avg_recency} days` : '—'],
+      ['Avg Value', data.avg_customer_value != null ? formatCurrency(data.avg_customer_value) : '—'],
+      ['Next Step', data.next_step || '—']
     ]
   };
   const rows = rowsByType[type] || [];
@@ -1237,7 +1245,18 @@ const ChurnPrediction = () => {
       {datasets.length === 0 && !isFetching && !loading && <EmptyState moduleName="Churn Analysis" />}
       {!results && datasets.length > 0 && !isFetching && !loading && (
         <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '50vh' }}>
-          <div className="premium-card" style={{ maxWidth: '450px', width: '100%', textAlign: 'center', padding: '3rem 2rem', background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: '16px', boxShadow: '0 4px 20px rgba(15, 23, 42, 0.05)' }}>
+          <div style={{
+            maxWidth: '450px', width: '100%', textAlign: 'center', padding: '3rem 2rem',
+            background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: '16px',
+            boxShadow: '0 4px 20px rgba(15, 23, 42, 0.05)', transition: 'border-color 0.2s'
+          }}
+            onMouseEnter={e => {
+              e.currentTarget.style.borderColor = '#000000';
+            }}
+            onMouseLeave={e => {
+              e.currentTarget.style.borderColor = 'var(--border)';
+            }}
+          >
             <div style={{ width: 64, height: 64, borderRadius: '16px', background: 'var(--bg-secondary)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 1.5rem auto' }}>
               <AlertTriangle size={32} color="#3B82F6" />
             </div>
@@ -1333,6 +1352,23 @@ const ChurnPrediction = () => {
                                 <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#64748B' }} allowDecimals={false} />
                                 <RechartsTooltip cursor={{ fill: '#F8FAFC' }} content={<AIBehaviorTooltip type="scoreBand" />} />
                                 <Bar dataKey="customer_count" name="Customers" fill="#8B5CF6" radius={[4, 4, 0, 0]} />
+                              </BarChart>
+                            </ResponsiveContainer>
+                          </div>
+                        </div>
+                      )}
+                      {filteredAiBehaviorCharts.top_ai_churn_signals?.length > 0 && (
+                        <div style={{ marginTop: '1rem', paddingTop: '0.9rem', borderTop: '1px solid #E2E8F0' }}>
+                          <p style={{ margin: 0, fontSize: '0.78rem', color: '#0F172A', fontWeight: 900 }}>Technical View: Top Behavioral Churn Signals</p>
+                          <p style={{ margin: '0.25rem 0 0.75rem 0', fontSize: '0.75rem', color: '#64748B', lineHeight: 1.45 }}>Relative importance or influence of each behavior feature in the random forest classification model.</p>
+                          <div style={{ height: 220, minWidth: 0 }}>
+                            <ResponsiveContainer width="100%" height="100%">
+                              <BarChart data={filteredAiBehaviorCharts.top_ai_churn_signals} layout="vertical" margin={{ top: 10, right: 10, left: 30, bottom: 0 }}>
+                                <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#E5E7EB" />
+                                <XAxis type="number" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#64748B' }} />
+                                <YAxis dataKey="label" type="category" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#64748B' }} width={120} />
+                                <RechartsTooltip cursor={{ fill: '#F8FAFC' }} content={<AIBehaviorTooltip type="signal" />} />
+                                <Bar dataKey="value" name="Signal Strength" fill="#6366F1" radius={[0, 4, 4, 0]} barSize={16} />
                               </BarChart>
                             </ResponsiveContainer>
                           </div>
@@ -1546,17 +1582,17 @@ const ChurnPrediction = () => {
                 </div>
 
                 <div className="premium-card churnChartCard" style={{ padding: '1.5rem', height: '340px', display: 'flex', flexDirection: 'column' }}>
-                  <h4 style={{ fontSize: '1.05rem', fontWeight: 800, color: '#0F172A', margin: 0 }}>Top Behavioral Churn Signals</h4>
-                  <p style={{ fontSize: '0.85rem', color: '#64748B', margin: '0.25rem 0 1.5rem 0' }}>Most influential customer behavior signals behind the risk scoring.</p>
+                  <h4 style={{ fontSize: '1.05rem', fontWeight: 800, color: '#0F172A', margin: 0 }}>Recommended Retention Actions</h4>
+                  <p style={{ fontSize: '0.85rem', color: '#64748B', margin: '0.25rem 0 1.5rem 0' }}>AI-ranked at-risk customers grouped by the best action to reduce churn.</p>
                   <div style={{ flex: 1, minHeight: 0 }}>
-                    {filteredAiBehaviorCharts.top_ai_churn_signals?.length > 0 ? (
+                    {filteredAiBehaviorCharts.ai_recommended_retention_actions?.length > 0 ? (
                       <ResponsiveContainer width="100%" height="100%">
-                        <BarChart data={filteredAiBehaviorCharts.top_ai_churn_signals} layout="vertical" margin={{ top: 10, right: 30, left: 30, bottom: 0 }}>
+                        <BarChart data={filteredAiBehaviorCharts.ai_recommended_retention_actions} layout="vertical" margin={{ top: 10, right: 30, left: 10, bottom: 0 }}>
                           <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#E5E7EB" />
                           <XAxis type="number" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#64748B' }} />
-                          <YAxis dataKey="label" type="category" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#64748B' }} width={140} />
-                          <RechartsTooltip cursor={{ fill: '#F8FAFC' }} content={<AIBehaviorTooltip type="signal" />} />
-                          <Bar dataKey="value" name="Signal Strength" fill="#6366F1" radius={[0, 4, 4, 0]} barSize={24} />
+                          <YAxis dataKey="label" type="category" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#64748B' }} width={160} />
+                          <RechartsTooltip cursor={{ fill: '#F8FAFC' }} content={<AIBehaviorTooltip type="retentionAction" />} />
+                          <Bar dataKey="value" name="At-Risk Customers" fill="#6366F1" radius={[0, 4, 4, 0]} barSize={24} />
                         </BarChart>
                       </ResponsiveContainer>
                     ) : (

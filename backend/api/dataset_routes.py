@@ -34,6 +34,10 @@ def _detect_dataset_type(df: pd.DataFrame) -> tuple[str, str]:
 @dataset_bp.route('/upload', methods=['POST'])
 @handle_errors
 def upload_dataset():
+    requester_role = request.headers.get('X-User-Role')
+    if not requester_role or requester_role not in ['System Admin', 'Manager', 'Analyst']:
+        return jsonify({'success': False, 'message': 'Unauthorized. Role not allowed to upload datasets.'}), 403
+
     """
     DIAGRAM 4.3.1.1 — Upload Offline Dataset pipeline:
     1. Receive multipart file from UI
@@ -141,15 +145,15 @@ def upload_dataset():
     }), 201
 
 
-@dataset_bp.route('/', methods=['GET'])
+@dataset_bp.route('', methods=['GET'])
 @handle_errors
 def list_datasets():
     """List all available datasets from MongoDB (Filtered by user_email)."""
     user_email = request.args.get('email')
     requester_role = request.headers.get('X-User-Role')
     
-    # Manager and System Admin can see all datasets across the organization
-    if requester_role in ['Manager', 'System Admin']:
+    # Manager, System Admin, Analyst, and Viewer can see all datasets across the organization
+    if requester_role in ['Manager', 'System Admin', 'Analyst', 'Viewer']:
         user_email = None
         
     datasets = db.list_all_datasets(user_email)
@@ -167,7 +171,7 @@ def get_dataset(dataset_id):
     user_email = request.args.get('email')
     requester_role = request.headers.get('X-User-Role')
     
-    if requester_role in ['Manager', 'System Admin']:
+    if requester_role in ['Manager', 'System Admin', 'Analyst', 'Viewer']:
         user_email = None
         
     dataset = db.get_dataset_info(dataset_id, user_email)
@@ -191,7 +195,7 @@ def delete_dataset(dataset_id):
 
     db.get_dataset_info(dataset_id, target_user_email)   # Will raise 404 if not found
 
-    if requester_role != 'Manager':
+    if requester_role not in ['Manager', 'System Admin']:
         db.create_approval_request('DELETE_DATASET', {'dataset_id': dataset_id, 'user_email': user_email}, requester_email)
         log_activity(requester_email, requester_role, "dataset.delete_request", status="SUCCESS", details={"dataset_id": dataset_id, "target_owner": user_email})
         return jsonify({'success': True, 'message': f'Delete request for {dataset_id} sent to Manager for approval.', 'pending': True})

@@ -1,7 +1,7 @@
 import React from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import Navbar from '../components/common/Navbar';
-import { User, Shield, Users, Activity, Palette, ArrowLeft } from 'lucide-react';
+import { User, Shield, Users, Activity, Palette, ArrowLeft, Clock } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
 const SettingsPage = () => {
@@ -29,13 +29,22 @@ const SettingsPage = () => {
       icon: Users,
       title: 'Team Members',
       desc: 'Invite teammates and manage roles.',
-      route: '/settings/team'
+      route: '/settings/team',
+      roles: ['System Admin', 'Manager']
+    },
+    {
+      icon: Clock,
+      title: 'Audit Logs',
+      desc: 'Track team activity and system events.',
+      route: '/settings/audit-logs',
+      roles: ['System Admin', 'Manager']
     },
     {
       icon: Activity,
       title: 'System Health',
       desc: 'Live status of API, models, and connectors.',
-      route: '/settings/health'
+      route: '/settings/health',
+      roles: ['System Admin', 'Manager']
     },
     {
       icon: Palette,
@@ -43,7 +52,7 @@ const SettingsPage = () => {
       desc: 'Theme and display preferences.',
       route: '/settings/appearance'
     }
-  ];
+  ].filter(card => !card.roles || card.roles.includes(user?.role));
 
   const navigate = useNavigate();
 
@@ -59,7 +68,18 @@ const SettingsPage = () => {
         </div>
         
         {/* Top Profile Card */}
-        <div className="premium-card" style={{ marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '1.5rem', padding: '2rem' }}>
+        <div style={{ 
+          marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '1.5rem', padding: '2rem',
+          borderRadius: '24px', background: 'var(--bg-card)', border: '1px solid var(--border)',
+          boxShadow: '0 4px 24px rgba(15, 23, 42, 0.05)', transition: 'border-color 0.2s'
+        }}
+        onMouseEnter={e => {
+          e.currentTarget.style.borderColor = '#000000';
+        }}
+        onMouseLeave={e => {
+          e.currentTarget.style.borderColor = 'var(--border)';
+        }}
+        >
           <div style={{ 
             width: 72, height: 72, borderRadius: '50%', 
             background: '#E0E7FF', color: '#4F46E5', 
@@ -95,14 +115,12 @@ const SettingsPage = () => {
               padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem',
               cursor: 'pointer', transition: 'all 0.2s', boxShadow: '0 1px 3px rgba(0,0,0,0.02)'
             }}
-            onMouseEnter={e => {
-              e.currentTarget.style.borderColor = '#4F46E5';
-              e.currentTarget.style.boxShadow = '0 4px 12px rgba(79, 70, 229, 0.08)';
-            }}
-            onMouseLeave={e => {
-              e.currentTarget.style.borderColor = 'var(--border)';
-              e.currentTarget.style.boxShadow = '0 1px 3px rgba(0,0,0,0.02)';
-            }}
+             onMouseEnter={e => {
+               e.currentTarget.style.borderColor = '#000000';
+             }}
+             onMouseLeave={e => {
+               e.currentTarget.style.borderColor = 'var(--border)';
+             }}
             onClick={() => navigate(card.route)}
             >
               <div style={{ color: '#4F46E5' }}>

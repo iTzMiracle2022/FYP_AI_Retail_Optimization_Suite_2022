@@ -223,7 +223,7 @@ def google_setup():
     send_verification_email(email, user['name'])
     return jsonify({'success': True, 'message': 'Account setup complete! Please check your email to verify and activate your account.'})
 
-@user_bp.route('/', methods=['GET'])
+@user_bp.route('', methods=['GET'])
 def get_users():
     """List all registered team members."""
     try:
@@ -249,7 +249,10 @@ def update_role():
     requester_role = request.headers.get('X-User-Role')
     requester_email = request.headers.get('X-User-Email', 'Unknown')
     
-    if requester_role != 'Manager':
+    if requester_role == 'Manager' and new_role == 'System Admin':
+        return jsonify({'success': False, 'message': 'Managers cannot promote anyone to System Admin.'}), 403
+        
+    if requester_role not in ['Manager', 'System Admin']:
         db.create_approval_request('UPDATE_ROLE', {'email': email, 'role': new_role}, requester_email)
         return jsonify({'success': True, 'message': 'Update role request sent to Manager for approval.', 'pending': True})
         
@@ -273,7 +276,10 @@ def add_user():
     requester_role = request.headers.get('X-User-Role')
     requester_email = request.headers.get('X-User-Email', 'Unknown')
     
-    if requester_role != 'Manager':
+    if requester_role == 'Manager' and role == 'System Admin':
+        return jsonify({'success': False, 'message': 'Managers cannot invite or pre-authorize a System Admin.'}), 403
+        
+    if requester_role not in ['Manager', 'System Admin']:
         db.create_approval_request('ADD_USER', {'name': name, 'email': email, 'role': role}, requester_email)
         return jsonify({'success': True, 'message': f'Invite request for {name} sent to Manager for approval.', 'pending': True})
         
@@ -282,9 +288,18 @@ def add_user():
 
     # 📧 Send Invitation Email
     try:
-        portal_url = f"{config.FRONTEND_URL}/"
-        msg = Message("Invitation to AI Retail Optimization Suite", recipients=[email])
-        msg.body = f"Hello {name},\n\nYou have been invited to join the AI Retail Optimization Suite as a {role}.\n\nAccess your enterprise portal here: {portal_url}\n\nWelcome to the team!"
+        signup_url = f"{config.FRONTEND_URL}/signup"
+        msg = Message("Invitation to Join AI Retail Optimization Suite", recipients=[email])
+        msg.body = (
+            f"Dear {name},\n\n"
+            f"You have been invited to join the AI Retail Optimization Suite as a {role}.\n\n"
+            f"Please register and create your account using this exact email address ({email}) to "
+            f"activate your permissions and gain access to your designated workspace role.\n\n"
+            f"Get started by creating your account here:\n"
+            f"{signup_url}\n\n"
+            f"Best regards,\n"
+            f"The AI Retail Suite Team"
+        )
         mail.send(msg)
     except Exception as e:
         print(f"Invite email failed: {e}")
@@ -297,11 +312,16 @@ def delete_user(email):
     requester_role = request.headers.get('X-User-Role')
     requester_email = request.headers.get('X-User-Email', 'Unknown')
     
-    if requester_role != 'Manager':
+    if requester_role not in ['Manager', 'System Admin']:
         db.create_approval_request('DELETE_USER', {'email': email}, requester_email)
         return jsonify({'success': True, 'message': f'Delete request for {email} sent to Manager for approval.', 'pending': True})
         
     try:
+        # Prevent Manager from removing a System Admin
+        target_user = db.users.find_one({'email': email})
+        if target_user and target_user.get('role') == 'System Admin' and requester_role == 'Manager':
+            return jsonify({'success': False, 'message': 'Managers cannot remove a System Admin.'}), 403
+
         db.users.delete_one({'email': email})
         return jsonify({'success': True, 'message': f'User {email} removed.'})
     except Exception as e:
@@ -311,7 +331,7 @@ def delete_user(email):
 def get_approvals():
     """Get all pending approvals (Manager only)."""
     requester_role = request.headers.get('X-User-Role')
-    if requester_role != 'Manager':
+    if requester_role not in ['Manager', 'System Admin']:
         return jsonify({'success': False, 'message': 'Unauthorized'}), 403
     return jsonify({'success': True, 'approvals': db.get_pending_approvals()})
 
@@ -322,20 +342,35 @@ def approve_request():
     requester_role = request.headers.get('X-User-Role')
     requester_email = request.headers.get('X-User-Email', 'System')
     
-    if requester_role != 'Manager':
+    if requester_role not in ['Manager', 'System Admin']:
         return jsonify({'success': False, 'message': 'Unauthorized'}), 403
         
     req = db.get_approval_request(request_id)
     if not req or req['status'] != 'pending':
         return jsonify({'success': False, 'message': 'Request not found or already resolved.'}), 400
         
+    if requester_role == 'Manager' and req['type'] in ['ADD_USER', 'UPDATE_ROLE'] and req['payload'].get('role') == 'System Admin':
+        return jsonify({'success': False, 'message': 'Managers cannot approve promotion/creation of a System Admin.'}), 403
+        
     try:
         if req['type'] == 'ADD_USER':
             db.create_user(req['payload']['name'], req['payload']['email'], req['payload']['role'], is_verified=False)
             try:
-                portal_url = f"{config.FRONTEND_URL}/"
-                msg = Message("Invitation to AI Retail Optimization Suite", recipients=[req['payload']['email']])
-                msg.body = f"Hello {req['payload']['name']},\n\nYou have been invited to join the AI Retail Optimization Suite as a {req['payload']['role']}.\n\nAccess your enterprise portal here: {portal_url}\n\nWelcome to the team!"
+                signup_url = f"{config.FRONTEND_URL}/signup"
+                invited_email = req['payload']['email']
+                invited_name = req['payload']['name']
+                invited_role = req['payload']['role']
+                msg = Message("Invitation to Join AI Retail Optimization Suite", recipients=[invited_email])
+                msg.body = (
+                    f"Dear {invited_name},\n\n"
+                    f"You have been invited to join the AI Retail Optimization Suite as a {invited_role}.\n\n"
+                    f"Please register and create your account using this exact email address ({invited_email}) to "
+                    f"activate your permissions and gain access to your designated workspace role.\n\n"
+                    f"Get started by creating your account here:\n"
+                    f"{signup_url}\n\n"
+                    f"Best regards,\n"
+                    f"The AI Retail Suite Team"
+                )
                 mail.send(msg)
             except Exception as e:
                 pass
@@ -361,7 +396,7 @@ def reject_request():
     requester_role = request.headers.get('X-User-Role')
     requester_email = request.headers.get('X-User-Email', 'System')
     
-    if requester_role != 'Manager':
+    if requester_role not in ['Manager', 'System Admin']:
         return jsonify({'success': False, 'message': 'Unauthorized'}), 403
         
     db.update_approval_status(request_id, 'rejected', requester_email)
@@ -415,4 +450,15 @@ def reset_password(token):
     db.users.update_one({'email': email}, {'$set': {'password_hash': hashed}})
     
     return jsonify({'success': True, 'message': 'Password has been reset successfully! You can now log in.'})
+
+@user_bp.route('/profile', methods=['POST'])
+def update_profile():
+    """Update profile information (e.g. name)."""
+    data = request.json
+    email = data.get('email')
+    name = data.get('name')
+    if not email or not name:
+        return jsonify({'success': False, 'message': 'Email and Name are required'}), 400
+    db.users.update_one({'email': email}, {'$set': {'name': name}})
+    return jsonify({'success': True, 'message': 'Profile updated successfully'})
 

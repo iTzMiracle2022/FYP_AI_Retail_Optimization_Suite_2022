@@ -6,12 +6,16 @@ import API from '../api/index';
 
 const Analytics = () => {
   const { user } = useAuth();
-  const [activeTab, setActiveTab] = useState('models');
+  const isDev = import.meta.env.DEV;
+  
+  const defaultTab = isDev ? (new URLSearchParams(window.location.search).get('tab') || 'models') : 'audit';
+  const [activeTab, setActiveTab] = useState(defaultTab);
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState({
     models: [],
     errors: [],
-    preprocessing: []
+    preprocessing: [],
+    auditLogs: []
   });
 
   useEffect(() => {
@@ -19,14 +23,22 @@ const Analytics = () => {
     
     const fetchStats = async () => {
       try {
-        const res = await API.get(`/analytics/stats?email=${user.email}`);
-        if (res.success) {
-          setStats({
-            models: res.models || [],
-            errors: res.errors || [],
-            preprocessing: res.preprocessing || []
-          });
+        let statsRes = { success: true, models: [], errors: [], preprocessing: [] };
+        if (isDev) {
+          const res = await API.get(`/analytics/stats?email=${user.email}`).catch(() => ({ success: false }));
+          if (res.success) statsRes = res;
         }
+        
+        const auditRes = await API.get(`/audit-logs`, {
+          headers: { 'X-User-Email': user.email, 'X-User-Role': user.role }
+        }).catch(() => ({ success: false, logs: [] }));
+
+        setStats({
+          models: statsRes.models || [],
+          errors: statsRes.errors || [],
+          preprocessing: statsRes.preprocessing || [],
+          auditLogs: auditRes.success ? auditRes.logs : []
+        });
       } catch (err) {
         console.error("Analytics fetch failed:", err);
       } finally {
@@ -36,30 +48,64 @@ const Analytics = () => {
     fetchStats();
   }, [user?.email]);
 
+  const displayMetric = (m) => {
+    if (m.metric_name) {
+      return `${m.metric_name}: ${m.metric_display || 'N/A'}`;
+    }
+    
+    if (m.accuracy === undefined || m.accuracy === null) {
+      return 'Metric: N/A';
+    }
+    
+    const val = parseFloat(m.accuracy);
+    if (isNaN(val)) {
+      if (typeof m.accuracy === 'string' && m.accuracy.endsWith('%')) {
+        const label = m.model_type === 'ARIMA (Hybrid)' ? 'MAPE' : 'Accuracy';
+        return `${label}: ${m.accuracy}`;
+      }
+      return 'Metric: N/A';
+    }
+    
+    if (m.model_type === 'RandomForestClassifier') {
+      return `Accuracy: ${(val * 100).toFixed(1)}%`;
+    } else if (m.model_type === 'KMeans') {
+      return `Silhouette Score: ${val.toFixed(4)}`;
+    } else if (m.model_type === 'ARIMA (Hybrid)') {
+      return `MAPE: ${(val * 100).toFixed(1)}%`;
+    } else if (m.model_type === 'Q-Learning Engine') {
+      return 'Cost Improvement: N/A';
+    }
+    
+    return `Accuracy: ${(val * 100).toFixed(1)}%`;
+  };
+
   return (
     <div className="dashboard-content-fade-in">
       <Navbar title="History & Logs" />
 
       {/* Modern Tabs */}
-      <div style={{ 
-        display: 'flex', 
-        gap: '0.5rem', 
-        marginBottom: '2rem', 
-        background: 'rgba(255,255,255,0.02)', 
-        padding: '0.5rem', 
-        borderRadius: '18px', 
-        border: '1px solid rgba(255,255,255,0.05)', 
-        width: 'fit-content' 
-      }}>
-        <TabButton id="models" label="Model History" active={activeTab} onClick={setActiveTab} icon={BarChart} />
-        <TabButton id="errors" label="System Alerts" active={activeTab} onClick={setActiveTab} icon={AlertTriangle} />
-        <TabButton id="data"   label="Data Audit" active={activeTab} onClick={setActiveTab} icon={RefreshCcw} />
-      </div>
+      {isDev && (
+        <div style={{ 
+          display: 'flex', 
+          gap: '0.5rem', 
+          marginBottom: '2rem', 
+          background: 'rgba(255,255,255,0.02)', 
+          padding: '0.5rem', 
+          borderRadius: '18px', 
+          border: '1px solid rgba(255,255,255,0.05)', 
+          width: 'fit-content' 
+        }}>
+          <TabButton id="models" label="Model History" active={activeTab} onClick={setActiveTab} icon={BarChart} />
+          <TabButton id="errors" label="System Alerts" active={activeTab} onClick={setActiveTab} icon={AlertTriangle} />
+          <TabButton id="data"   label="Data Audit" active={activeTab} onClick={setActiveTab} icon={RefreshCcw} />
+          <TabButton id="audit"  label="Audit Logs" active={activeTab} onClick={setActiveTab} icon={Clock} />
+        </div>
+      )}
 
-      <div className="premium-card" style={{ padding: '0', overflow: 'hidden' }}>
+      <div style={{ padding: '0', overflow: 'hidden', borderRadius: '24px', background: 'var(--bg-card)', border: '1px solid var(--border)', boxShadow: '0 4px 24px rgba(15, 23, 42, 0.05)', transition: 'border-color 0.2s' }} onMouseEnter={e => e.currentTarget.style.borderColor = '#000000'} onMouseLeave={e => e.currentTarget.style.borderColor = 'var(--border)'}>
         <div style={{ padding: '1.5rem 2rem', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
           <h3 className="glow-text" style={{ fontSize: '1.1rem', fontWeight: 700 }}>
-            {activeTab === 'models' ? 'Past ML Predictions' : activeTab === 'errors' ? 'System Health Logs' : 'Data Processing Audit'}
+            {activeTab === 'models' ? 'Past ML Predictions' : activeTab === 'errors' ? 'System Health Logs' : activeTab === 'data' ? 'Data Processing Audit' : 'System Audit Logs'}
           </h3>
         </div>
         
@@ -71,7 +117,7 @@ const Analytics = () => {
                   <>
                     <th style={thStyle}>Type</th>
                     <th style={thStyle}>Analysis</th>
-                    <th style={thStyle}>Accuracy</th>
+                    <th style={thStyle}>Model Metric</th>
                     <th style={thStyle}>Hardware</th>
                     <th style={thStyle}>Date</th>
                   </>
@@ -92,6 +138,15 @@ const Analytics = () => {
                     <th style={thStyle}>Executed At</th>
                   </>
                 )}
+                {activeTab === 'audit' && (
+                  <>
+                    <th style={thStyle}>User</th>
+                    <th style={thStyle}>Role</th>
+                    <th style={thStyle}>Action</th>
+                    <th style={thStyle}>Status</th>
+                    <th style={thStyle}>Time</th>
+                  </>
+                )}
               </tr>
             </thead>
             <tbody>
@@ -103,7 +158,7 @@ const Analytics = () => {
                     <tr key={i} className="hover-row" style={trStyle}>
                       <td style={tdStyle}>{m.model_type}</td>
                       <td style={tdStyle}>{m.analysis_type}</td>
-                      <td style={tdStyle}><span style={{ color: '#10b981', fontWeight: 800 }}>{(m.accuracy * 100).toFixed(1)}%</span></td>
+                      <td style={tdStyle}><span style={{ color: '#10b981', fontWeight: 800 }}>{displayMetric(m)}</span></td>
                       <td style={tdStyle}>
                          <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', background: 'rgba(16, 185, 129, 0.1)', padding: '4px 10px', borderRadius: '8px', border: '1px solid rgba(16, 185, 129, 0.2)' }}>
                            <Cpu size={12} color="#10b981" />
@@ -127,6 +182,23 @@ const Analytics = () => {
                       <td style={tdStyle}>{p.normalization_method}</td>
                       <td style={tdStyle}><span style={{ fontWeight: 600 }}>{p.rows_before} → {p.rows_after}</span></td>
                       <td style={tdStyle}>{new Date(p.timestamp).toLocaleString()}</td>
+                    </tr>
+                  ))}
+                  {activeTab === 'audit' && stats.auditLogs.map((log, i) => (
+                    <tr key={i} className="hover-row" style={trStyle}>
+                      <td style={tdStyle}>{log.user_email}</td>
+                      <td style={tdStyle}>
+                        <span style={{ background: 'rgba(168, 85, 247, 0.1)', color: '#a855f7', padding: '4px 8px', borderRadius: '4px', fontSize: '0.7rem', fontWeight: 700 }}>
+                          {log.user_role}
+                        </span>
+                      </td>
+                      <td style={tdStyle}>{log.action}</td>
+                      <td style={tdStyle}>
+                        <span style={{ color: log.status === 'SUCCESS' ? '#10b981' : '#ef4444', fontWeight: 700 }}>
+                          {log.status}
+                        </span>
+                      </td>
+                      <td style={tdStyle}>{new Date(log.timestamp).toLocaleString()}</td>
                     </tr>
                   ))}
                 </>
@@ -162,7 +234,7 @@ const TabButton = ({ id, label, active, onClick, icon: Icon }) => (
 );
 
 const thStyle = { padding: '1.25rem 2rem', textAlign: 'left', fontSize: '0.75rem', textTransform: 'uppercase', color: 'var(--text-light)', letterSpacing: '0.1em', fontWeight: 800, opacity: 0.6 };
-const tdStyle = { padding: '1.25rem 2rem', borderTop: '1px solid rgba(255,255,255,0.05)', fontSize: '0.9rem', color: '#f1f5f9' };
+const tdStyle = { padding: '1.25rem 2rem', borderTop: '1px solid var(--border)', fontSize: '0.9rem', color: 'var(--text-main)' };
 const trStyle = { transition: 'background-color 0.3s' };
 
 export default Analytics;

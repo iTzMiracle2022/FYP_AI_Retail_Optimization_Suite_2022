@@ -113,10 +113,10 @@ const Sidebar = ({ isCollapsed, toggleCollapse }) => {
           <NavItem to="/upload"    icon={Database}         label="Data Hub" onClick={closeSidebar} roles={['Manager', 'System Admin']} isCollapsed={isCollapsed} />
           
           <SectionLabel text="AI Modules" roles={['System Admin', 'Manager', 'Analyst', 'Viewer']} isCollapsed={isCollapsed} />
-          <NavItem to="/sales"     icon={LineChart}       label="Sales Trends" onClick={closeSidebar} roles={['System Admin', 'Manager', 'Viewer']} isCollapsed={isCollapsed} />
-          <NavItem to="/churn"     icon={Users}           label="Customer Churn" onClick={closeSidebar} roles={['System Admin', 'Manager', 'Analyst']} isCollapsed={isCollapsed} />
-          <NavItem to="/inventory" icon={Box}             label="Inventory Forecast" onClick={closeSidebar} roles={['System Admin', 'Manager']} isCollapsed={isCollapsed} />
-          <NavItem to="/marketing" icon={TrendingUp}      label="Marketing Segments" onClick={closeSidebar} roles={['System Admin', 'Manager', 'Analyst']} isCollapsed={isCollapsed} />
+          <NavItem to="/sales"     icon={LineChart}       label="Sales Trends" onClick={closeSidebar} roles={['System Admin', 'Manager', 'Analyst', 'Viewer']} isCollapsed={isCollapsed} />
+          <NavItem to="/churn"     icon={Users}           label="Customer Churn" onClick={closeSidebar} roles={['System Admin', 'Manager', 'Analyst', 'Viewer']} isCollapsed={isCollapsed} />
+          <NavItem to="/inventory" icon={Box}             label="Inventory Forecast" onClick={closeSidebar} roles={['System Admin', 'Manager', 'Analyst', 'Viewer']} isCollapsed={isCollapsed} />
+          <NavItem to="/marketing" icon={TrendingUp}      label="Marketing Segments" onClick={closeSidebar} roles={['System Admin', 'Manager', 'Analyst', 'Viewer']} isCollapsed={isCollapsed} />
           
           <SectionLabel text="Management" isCollapsed={isCollapsed} roles={['System Admin', 'Manager']} />
           <NavItem to="/analytics" icon={FileText}        label="Reports & Activity" onClick={closeSidebar} roles={['System Admin', 'Manager']} isCollapsed={isCollapsed} />

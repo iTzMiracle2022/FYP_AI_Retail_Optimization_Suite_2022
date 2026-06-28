@@ -13,7 +13,7 @@ export const uploadDataset = (file, email) => {
 };
 
 export const listDatasets = (email) => 
-  API.get(`/datasets/${email ? `?email=${email}` : ''}`);
+  API.get(`/datasets${email ? `?email=${email}` : ''}`);
 
 export const deleteDataset = (datasetId, email) => 
   API.delete(`/datasets/${datasetId}${email ? `?email=${email}` : ''}`);

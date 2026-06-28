@@ -331,60 +331,103 @@ def _print_auto_k_console_summary(result: dict | None, *, cache_status: str, pri
     if not result or result.get("cluster_mode") != "auto":
         return
 
+    import textwrap
+    def print_wrapped_kv(label, text, indent_width=25, width=80):
+        prefix = f"{label:<{indent_width}} : "
+        lines = textwrap.wrap(str(text), width=width - indent_width - 3)
+        if not lines:
+            print(prefix)
+            return
+        print(f"{prefix}{lines[0]}")
+        for line in lines[1:]:
+            print(f"{' ' * (indent_width + 3)}{line}")
+
     k_selection = result.get("k_selection") or {}
     candidate_scores = k_selection.get("candidate_scores") or []
     selected_k = result.get("selected_k", result.get("n_clusters"))
     selected_candidate = next((candidate for candidate in candidate_scores if candidate.get("k") == selected_k), {})
     gpu_used = "Yes" if result.get("gpu_used") or result.get("using_gpu") else "No"
 
-    print("================ MARKETING AUTO-K SUMMARY ================")
-    print(f"Dataset: {result.get('dataset_id', 'unknown')}")
-    print("Cluster Mode: AUTO")
-    print(f"Cache Status: {cache_status}")
-    print(f"Selected K: {selected_k}")
-    print(f"Segment Count: {result.get('n_clusters', selected_k)}")
-    print(f"Customers Clustered: {int(result.get('total_customers') or 0):,}")
-    print(f"GPU Used: {gpu_used}")
-    print(f"K-Means Feature Space: {result.get('cluster_feature_columns', ['Total_Spend', 'Total_Purchases', 'Recency', 'Income', 'Response'])}")
-    print(f"Final Silhouette: {_fmt_log_value(result.get('silhouette_score'))}")
-    print(f"Best Candidate Validation: {_fmt_log_value(selected_candidate.get('validation_score'))}")
-    print(f"Business Usability: {_fmt_log_value(selected_candidate.get('business_usability_score'), digits=2)}")
-    print(f"Davies-Bouldin: {_fmt_log_value(selected_candidate.get('davies_bouldin_score'))}")
-    print(f"Calinski-Harabasz: {_fmt_log_value(selected_candidate.get('calinski_harabasz_score'))}")
-    print(f"Reason: {k_selection.get('reason', 'Auto-K selected the best practical segmentation balance.')}")
-    print("==========================================================")
+    print("\n" + "=" * 80)
+    print(f"║ {'MARKETING AUTO-K SUMMARY':^76} ║")
+    print("=" * 80)
+
+    print("\n─── CLUSTERING SUMMARY ─────────────────────────────────────────────────────────")
+    print_wrapped_kv("Dataset Name", result.get('dataset_id', 'unknown'))
+    print_wrapped_kv("Cluster Mode", "AUTO")
+    print_wrapped_kv("Cache Status", cache_status)
+    print_wrapped_kv("Selected K", str(selected_k))
+    print_wrapped_kv("Segment Count", str(result.get('n_clusters', selected_k)))
+    print_wrapped_kv("Customers Clustered", f"{int(result.get('total_customers') or 0):,}")
+    print_wrapped_kv("GPU Used", gpu_used)
+    
+    feats = result.get('cluster_feature_columns')
+    feat_space = ", ".join(feats) if isinstance(feats, list) else str(feats)
+    print_wrapped_kv("Feature Space", feat_space)
+    
+    print_wrapped_kv("Final Silhouette", _fmt_log_value(result.get('silhouette_score')))
+    print_wrapped_kv("Best Candidate Valid", _fmt_log_value(selected_candidate.get('validation_score')))
+    print_wrapped_kv("Business Usability", _fmt_log_value(selected_candidate.get('business_usability_score'), digits=2))
+    print_wrapped_kv("Davies-Bouldin", _fmt_log_value(selected_candidate.get('davies_bouldin_score')))
+    print_wrapped_kv("Calinski-Harabasz", _fmt_log_value(selected_candidate.get('calinski_harabasz_score')))
+    print_wrapped_kv("Selection Reason", k_selection.get('reason', 'Auto-K selected the best practical segmentation balance.'))
+    print("=" * 80 + "\n")
 
     if print_candidates and candidate_scores:
-        print("Auto-K Candidates:")
+        print("─── AUTO-K CANDIDATES ──────────────────────────────────────────────────────────")
+        header = f"{'K':<4} | {'Silhouette':<12} | {'DB Score':<10} | {'Validation':<12} | {'Balance Status':<15} | {'Selected':<8}"
+        print(header)
+        print("-" * len(header))
         for candidate in candidate_scores:
-            selected_marker = " | SELECTED" if candidate.get("k") == selected_k else ""
-            print(
-                f"K={candidate.get('k')} | "
-                f"Silhouette={_fmt_log_value(candidate.get('silhouette_score'))} | "
-                f"DB={_fmt_log_value(candidate.get('davies_bouldin_score'))} | "
-                f"Validation={_fmt_log_value(candidate.get('validation_score'))} | "
-                f"Balance={candidate.get('balance_status', 'N/A')}"
-                f"{selected_marker}"
+            is_selected = "  ★ YES" if candidate.get("k") == selected_k else ""
+            row_str = (
+                f"{candidate.get('k'):<4} | "
+                f"{_fmt_log_value(candidate.get('silhouette_score'), digits=4):<12} | "
+                f"{_fmt_log_value(candidate.get('davies_bouldin_score'), digits=4):<10} | "
+                f"{_fmt_log_value(candidate.get('validation_score'), digits=4):<12} | "
+                f"{candidate.get('balance_status', 'N/A'):<15} | "
+                f"{is_selected:<8}"
             )
+            print(row_str)
+        print("=" * 80 + "\n")
 
 
 def _print_kmeans_console_summary(result: dict | None, *, cache_status: str):
     if not result or result.get("cluster_mode") == "auto":
         return
 
+    import textwrap
+    def print_wrapped_kv(label, text, indent_width=25, width=80):
+        prefix = f"{label:<{indent_width}} : "
+        lines = textwrap.wrap(str(text), width=width - indent_width - 3)
+        if not lines:
+            print(prefix)
+            return
+        print(f"{prefix}{lines[0]}")
+        for line in lines[1:]:
+            print(f"{' ' * (indent_width + 3)}{line}")
+
     gpu_used = "Yes" if result.get("gpu_used") or result.get("using_gpu") else "No"
-    print("================ MARKETING K-MEANS SUMMARY ================")
-    print(f"Dataset: {result.get('dataset_id', 'unknown')}")
-    print("Cluster Mode: MANUAL")
-    print(f"Cache Status: {cache_status}")
-    print(f"Requested K: {result.get('requested_clusters', result.get('n_clusters'))}")
-    print(f"Segment Count: {result.get('n_clusters')}")
-    print(f"Customers Clustered: {int(result.get('total_customers') or 0):,}")
-    print(f"GPU Used: {gpu_used}")
-    print(f"K-Means Feature Space: {result.get('cluster_feature_columns', ['Total_Spend', 'Total_Purchases', 'Recency', 'Income', 'Response'])}")
-    print(f"Final Silhouette: {_fmt_log_value(result.get('silhouette_score'))}")
-    print("Reason: Manual customer segment count was used for this run.")
-    print("==========================================================")
+    print("\n" + "=" * 80)
+    print(f"║ {'MARKETING K-MEANS SUMMARY':^76} ║")
+    print("=" * 80)
+
+    print("\n─── CLUSTERING SUMMARY ─────────────────────────────────────────────────────────")
+    print_wrapped_kv("Dataset Name", result.get('dataset_id', 'unknown'))
+    print_wrapped_kv("Cluster Mode", "MANUAL")
+    print_wrapped_kv("Cache Status", cache_status)
+    print_wrapped_kv("Requested K", str(result.get('requested_clusters', result.get('n_clusters'))))
+    print_wrapped_kv("Segment Count", str(result.get('n_clusters')))
+    print_wrapped_kv("Customers Clustered", f"{int(result.get('total_customers') or 0):,}")
+    print_wrapped_kv("GPU Used", gpu_used)
+    
+    feats = result.get('cluster_feature_columns')
+    feat_space = ", ".join(feats) if isinstance(feats, list) else str(feats)
+    print_wrapped_kv("Feature Space", feat_space)
+    
+    print_wrapped_kv("Final Silhouette", _fmt_log_value(result.get('silhouette_score')))
+    print_wrapped_kv("Selection Reason", "Manual customer segment count was used for this run.")
+    print("=" * 80 + "\n")
 
 
 @marketing_bp.route('/analyze', methods=['POST'])
@@ -405,7 +448,7 @@ def analyze_customers():
     # ── Auth / ownership check (unchanged) ──
     user_email = data.get('email')
     requester_role = request.headers.get('X-User-Role')
-    dataset_owner_email = None if requester_role and requester_role.lower() in ['manager', 'system admin'] else user_email
+    dataset_owner_email = None if requester_role and requester_role.lower() in ['manager', 'system admin', 'analyst', 'viewer'] else user_email
     db.get_dataset_info(dataset_id, dataset_owner_email)
 
     # ── Build cache key ──
@@ -416,6 +459,14 @@ def analyze_customers():
         cluster_mode=cluster_mode,
         candidate_range=(2, 8),
     ) if dataset_path else None
+
+    # Check if a cache hit exists for Viewer
+    is_cache_hit = False
+    if cache_key and not force_refresh:
+        is_cache_hit = cache_get(cache_key) is not None
+
+    if requester_role == 'Viewer' and force_refresh:
+        return jsonify({'success': False, 'message': 'Unauthorized. Viewers cannot force refresh segment analysis.'}), 403
 
     # ── Cache lookup ──
 
