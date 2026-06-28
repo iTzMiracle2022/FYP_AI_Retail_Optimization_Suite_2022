@@ -54,8 +54,8 @@ const KPICard = ({ title, value, icon: Icon, color, subText, subTextColor = 'var
         }}>
         {typeof value === 'number' 
           ? (title.includes('Revenue') 
-              ? `$${new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 }).format(displayVal)}` 
-              : new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 }).format(displayVal)) 
+              ? `$${Math.round(displayVal).toLocaleString('en-US')}` 
+              : Math.round(displayVal).toLocaleString('en-US')) 
           : (value || '—')}
       </p>
       {subText && <p style={{ fontSize: '0.75rem', color: subTextColor, marginTop: '8px', fontWeight: 600 }}>{subText}</p>}
