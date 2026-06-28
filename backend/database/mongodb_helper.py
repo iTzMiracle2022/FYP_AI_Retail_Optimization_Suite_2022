@@ -764,7 +764,7 @@ class MongoDBHelper:
                     ]
                     # Dynamically calculate correct customer-level counts to prevent transaction-level leaks
                     total_customers = sum(item['value'] for item in real_churn_data if isinstance(item.get('value'), (int, float)))
-                    at_risk = sum(item['value'] for item in real_churn_data if item.get('name') in ['Watchlist', 'High Risk', 'Medium Risk', 'At-Risk'] and isinstance(item.get('value'), (int, float)))
+                    at_risk = sum(item['value'] for item in real_churn_data if item.get('name') != 'Low Risk' and isinstance(item.get('value'), (int, float)))
 
             # 3. Dynamic DB-Sourced Inventory Low Stock Summary
             if latest_inv:
