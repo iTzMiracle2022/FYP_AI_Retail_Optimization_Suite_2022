@@ -6,7 +6,7 @@ import API from '../api/index';
 import { Users, AlertTriangle, Activity, Play, ShieldCheck, TrendingUp, DollarSign, Search, Filter, Download, ChevronLeft, ChevronRight, Bookmark, SlidersHorizontal, Calendar, ArrowLeft, Info } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import './CustomerListCRM.css';
-import { ResponsiveContainer, PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, LineChart, Line, ComposedChart } from 'recharts';
+import { ResponsiveContainer, PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, LineChart, Line, ComposedChart, LabelList } from 'recharts';
 import EmptyState from '../components/common/EmptyState';
 import LoadingSpinner from '../components/common/LoadingSpinner';
 import DashboardLoadingState from '../components/common/DashboardLoadingState';
@@ -201,7 +201,7 @@ const AIBehaviorTooltip = ({ active, payload, label, type }) => {
   };
   const rowsByType = {
     riskZone: [
-      ['Risk Zone', rowLabel],
+      ['AI Risk Zone', rowLabel],
       ['Customers', formatNumber(data.customer_count)],
       ['Avg Risk Score', data.avg_model_risk_score != null ? formatPct(data.avg_model_risk_score) : '—'],
       ['Meaning', riskMeaning[rowLabel] || 'Risk zones are based on customer behavior score bands.']
@@ -210,6 +210,13 @@ const AIBehaviorTooltip = ({ active, payload, label, type }) => {
       ['Risk Score Band', rowLabel],
       ['Customers', formatNumber(data.customer_count)],
       ['Share', formatPct(data.percentage)]
+    ],
+    decisionConfidence: [
+      ['Decision Group', rowLabel],
+      ['Customers', formatNumber(data.customer_count)],
+      ['Avg Probability', data.avg_probability != null ? formatPct(data.avg_probability) : '—'],
+      ['Avg Confidence Margin', data.avg_margin != null ? formatPct(data.avg_margin) : '—'],
+      ['Interpretation', data.interpretation || '—']
     ],
     category: [
       ['Category', rowLabel],
@@ -338,7 +345,7 @@ const getActionClass = (action) => {
   return 'monitor';
 };
 
-const buildAiBehaviorCharts = (snapshot = [], topSignals = []) => {
+const buildAiBehaviorCharts = (snapshot = [], topSignals = [], thresholdPercent = 50.0) => {
   const rows = Array.isArray(snapshot) ? snapshot : [];
   const total = rows.length;
   const pct = (count, base = total) => base > 0 ? Number(((count / base) * 100).toFixed(1)) : 0;
@@ -346,6 +353,70 @@ const buildAiBehaviorCharts = (snapshot = [], topSignals = []) => {
     if (!items.length) return 0;
     return items.reduce((sum, item) => sum + (Number(item[key]) || 0), 0) / items.length;
   };
+
+  const threshold = thresholdPercent / 100;
+  const confidenceGroups = {
+    'Confident Low Risk': { name: 'Confident Low Risk', customer_count: 0, sum_prob: 0, sum_margin: 0 },
+    'Needs Review': { name: 'Needs Review', customer_count: 0, sum_prob: 0, sum_margin: 0 },
+    'Actionable Watchlist': { name: 'Actionable Watchlist', customer_count: 0, sum_prob: 0, sum_margin: 0 },
+    'Highest Available Risk': { name: 'Highest Available Risk', customer_count: 0, sum_prob: 0, sum_margin: 0 }
+  };
+
+  rows.forEach(row => {
+    const prob = Number(row.model_churn_probability) || (Number(row.risk_score_percent) / 100) || 0;
+    const margin = Math.abs(prob - threshold);
+    const zone = normalizeRiskZoneLabel(row.risk_zone);
+
+    let groupName = 'Needs Review';
+    if (zone === 'Low Risk') {
+      if (margin >= 0.05) {
+        groupName = 'Confident Low Risk';
+      } else {
+        groupName = 'Needs Review';
+      }
+    } else {
+      if (margin < 0.015) {
+        groupName = 'Needs Review';
+      } else if (zone === 'Watchlist') {
+        groupName = 'Actionable Watchlist';
+      } else if (zone === 'Highest Available Risk' || zone === 'High Risk') {
+        groupName = 'Highest Available Risk';
+      }
+    }
+
+    if (confidenceGroups[groupName]) {
+      confidenceGroups[groupName].customer_count += 1;
+      confidenceGroups[groupName].sum_prob += prob;
+      confidenceGroups[groupName].sum_margin += margin;
+    }
+  });
+
+  const interpretations = {
+    'Confident Low Risk': 'These customers are clearly below the churn threshold and require normal monitoring only.',
+    'Needs Review': 'These customers are close to the model decision threshold. Review behavior before taking aggressive retention action.',
+    'Actionable Watchlist': 'These customers show moderate churn risk and should be monitored or targeted with soft retention actions.',
+    'Highest Available Risk': 'These customers represent the strongest relative churn risk in the current dataset and should be prioritized first.'
+  };
+
+  const groupColors = {
+    'Confident Low Risk': '#10B981',      // Green
+    'Needs Review': '#94A3B8',             // Slate/Gray
+    'Actionable Watchlist': '#F59E0B',     // Amber
+    'Highest Available Risk': '#EF4444'   // Red
+  };
+
+  const decision_confidence_breakdown = Object.values(confidenceGroups).map(g => {
+    const count = g.customer_count;
+    return {
+      name: g.name,
+      label: g.name,
+      customer_count: count,
+      avg_probability: count > 0 ? (g.sum_prob / count) * 100 : 0,
+      avg_margin: count > 0 ? (g.sum_margin / count) * 100 : 0,
+      interpretation: interpretations[g.name],
+      fill: groupColors[g.name]
+    };
+  });
 
   const ai_predicted_risk_distribution = RISK_ZONE_ORDER
     .map(zone => {
@@ -376,6 +447,51 @@ const buildAiBehaviorCharts = (snapshot = [], topSignals = []) => {
     customer_count: bandCounts[band] || 0,
     percentage: pct(bandCounts[band] || 0)
   }));
+
+  // Granular Dynamic Bins calculation (10 equal bins over the active dataset range)
+  let minScore = 100;
+  let maxScore = 0;
+  rows.forEach(row => {
+    const score = Math.max(0, Math.min(100, Number(row.risk_score_percent) || 0));
+    if (score < minScore) minScore = score;
+    if (score > maxScore) maxScore = score;
+  });
+  if (minScore > maxScore) {
+    minScore = 0;
+    maxScore = 100;
+  }
+  const scorePadding = 0.5;
+  const activeMin = Math.max(0, minScore - scorePadding);
+  const activeMax = Math.min(100, maxScore + scorePadding);
+  const activeRange = activeMax - activeMin;
+  const numBins = 10;
+  const binWidth = activeRange > 0 ? activeRange / numBins : 10;
+  const granular_probability_bands = [];
+  for (let i = 0; i < numBins; i++) {
+    const start = activeMin + (i * binWidth);
+    const end = activeMin + ((i + 1) * binWidth);
+    const label = `${start.toFixed(1)}–${end.toFixed(1)}%`;
+    granular_probability_bands.push({
+      label,
+      name: label,
+      start,
+      end,
+      customer_count: 0
+    });
+  }
+  rows.forEach(row => {
+    const score = Math.max(0, Math.min(100, Number(row.risk_score_percent) || 0));
+    const matchedBin = granular_probability_bands.find(b => score >= b.start && score < b.end);
+    if (matchedBin) {
+      matchedBin.customer_count += 1;
+    } else if (score >= granular_probability_bands[numBins - 1].end) {
+      granular_probability_bands[numBins - 1].customer_count += 1;
+    }
+  });
+  const totalGranular = rows.length;
+  granular_probability_bands.forEach(b => {
+    b.percentage = totalGranular > 0 ? (b.customer_count / totalGranular * 100) : 0;
+  });
 
   const groupedRisk = (groupKey, outputKey) => {
     const groups = new Map();
@@ -431,15 +547,55 @@ const buildAiBehaviorCharts = (snapshot = [], topSignals = []) => {
     .sort((a, b) => b.probability_weighted_revenue_exposure - a.probability_weighted_revenue_exposure)
     ;
 
+  const nextStepMap = {
+    'VIP retention call': 'Call high-value accounts directly to offer dedicated support',
+    'Win-back reminder': 'Send comeback email or SMS offer',
+    'Support follow-up': 'Reach out to resolve product/return issues',
+    'Re-engagement offer': 'Send re-engagement bonus or newsletter',
+    'Personalized discount': 'Email custom 15% discount code',
+    'Product recommendation': 'Send personalized product catalog'
+  };
+
+  const actionGroups = new Map();
+  const atRiskRows = rows.filter(row => normalizeRiskZoneLabel(row.risk_zone) !== 'Low Risk');
+  atRiskRows.forEach(row => {
+    const action = row.ai_recommended_action || 'Contact customer';
+    if (!actionGroups.has(action)) {
+      actionGroups.set(action, []);
+    }
+    actionGroups.get(action).push(row);
+  });
+
+  const ai_recommended_retention_actions = Array.from(actionGroups.entries()).map(([action, items]) => {
+    const count = items.length;
+    const avgRisk = items.reduce((sum, r) => sum + (Number(r.risk_score_percent) || 0), 0) / count;
+    const avgRec = items.reduce((sum, r) => sum + (Number(r.recency_days) || 0), 0) / count;
+    const avgVal = items.reduce((sum, r) => sum + (Number(r.total_revenue) || 0), 0) / count;
+
+    return {
+      label: action,
+      name: action,
+      value: count,
+      customer_count: count,
+      avg_risk_score: Number(avgRisk.toFixed(1)),
+      avg_recency: Math.round(avgRec),
+      avg_customer_value: Math.round(avgVal),
+      next_step: nextStepMap[action] || 'Contact customer'
+    };
+  }).sort((a, b) => b.value - a.value);
+
   return {
     filtered_total_customers: total,
     ai_predicted_risk_distribution,
     risk_score_bands,
+    granular_probability_bands,
+    decision_confidence_breakdown,
     ai_risk_by_category: groupedRisk('primary_product_category', 'category'),
     ai_revenue_at_risk_by_category,
     ai_risk_by_payment_method: groupedRisk('primary_payment_method', 'payment'),
     ai_risk_by_recency_bucket: groupedRisk('recency_bucket', 'recency'),
     ai_risk_by_aov_band: groupedRisk('aov_band', 'aov'),
+    ai_recommended_retention_actions,
     top_ai_churn_signals: topSignals
   };
 };
@@ -948,12 +1104,24 @@ const ChurnPrediction = () => {
     });
   }, [aiBehaviorSnapshot, aiBehaviorFilters, aiFilterCount]);
   const filteredAiBehaviorCharts = useMemo(() => {
-    if (aiFilterCount > 0 && aiBehaviorSnapshot.length > 0) {
-      return buildAiBehaviorCharts(filteredAiBehaviorSnapshot, aiChurnAnalysis.top_ai_churn_signals || []);
+    if (aiBehaviorSnapshot.length > 0) {
+      const thresholdVal = Number(aiRiskZoneCutoffs.selected_threshold || 0.50) * 100;
+      return buildAiBehaviorCharts(filteredAiBehaviorSnapshot, aiChurnAnalysis.top_ai_churn_signals || [], thresholdVal);
     }
     return aiChurnAnalysis;
-  }, [aiFilterCount, aiBehaviorSnapshot, filteredAiBehaviorSnapshot, aiChurnAnalysis]);
+  }, [aiBehaviorSnapshot, filteredAiBehaviorSnapshot, aiChurnAnalysis, aiRiskZoneCutoffs.selected_threshold]);
   const riskScoreBandData = filteredAiBehaviorCharts.risk_score_bands || [];
+  const granularProbabilityBandData = filteredAiBehaviorCharts.granular_probability_bands || [];
+  const decisionConfidenceData = filteredAiBehaviorCharts.decision_confidence_breakdown || [];
+  const xAxisMax = useMemo(() => {
+    if (decisionConfidenceData.length === 0) return 1000;
+    const maxVal = Math.max(...decisionConfidenceData.map(d => d.customer_count || 0));
+    const rawMax = maxVal * 1.15;
+    if (rawMax <= 1000) return Math.ceil(rawMax / 100) * 100;
+    if (rawMax <= 5000) return Math.ceil(rawMax / 500) * 500;
+    if (rawMax <= 10000) return Math.ceil(rawMax / 1000) * 1000;
+    return Math.ceil(rawMax / 5000) * 5000;
+  }, [decisionConfidenceData]);
   const hasAiRiskTechnicalPanel = aiRiskTechnicalDetails.length > 0 || riskScoreBandData.length > 0;
   const aiRiskDistributionData = useMemo(() => {
     return (filteredAiBehaviorCharts.ai_predicted_risk_distribution || [])
@@ -1393,7 +1561,7 @@ const ChurnPrediction = () => {
               {aiBehaviorSnapshot.length > 0 && (
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '0.75rem', padding: '1rem', background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: '12px', marginBottom: '1.5rem' }}>
                   {[
-                    ['riskZone', 'Risk Zone', ['All', ...aiBehaviorFilterOptions.riskZones]],
+                    ['riskZone', 'AI Risk Zone', ['All', ...aiBehaviorFilterOptions.riskZones]],
                     ['category', 'Category', ['All', ...aiBehaviorFilterOptions.categories]],
                     ['paymentMethod', 'Payment Method', ['All', ...aiBehaviorFilterOptions.paymentMethods]],
                     ['recencyBucket', 'Recency Bucket', ['All', ...aiBehaviorFilterOptions.recencyBuckets]],
@@ -1461,6 +1629,58 @@ const ChurnPrediction = () => {
                   </div>
                 </div>
 
+                <div className="premium-card churnChartCard" style={{ padding: '1.5rem', height: '340px', display: 'flex', flexDirection: 'column' }}>
+                  <h4 style={{ fontSize: '1.05rem', fontWeight: 800, color: '#0F172A', margin: 0 }}>AI Decision Confidence Breakdown</h4>
+                  <p style={{ fontSize: '0.85rem', color: '#64748B', margin: '0.25rem 0 1.5rem 0' }}>Shows which AI churn predictions are confident, actionable, or need review.</p>
+                  <div style={{ flex: 1, minHeight: 0 }}>
+                    {decisionConfidenceData.length > 0 ? (
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart
+                          layout="vertical"
+                          data={decisionConfidenceData}
+                          margin={{ top: 10, right: 90, left: 10, bottom: 0 }}
+                        >
+                          <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#E5E7EB" />
+                          <XAxis type="number" domain={[0, xAxisMax]} axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#64748B' }} />
+                          <YAxis dataKey="name" type="category" width={140} axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#64748B' }} />
+                          <RechartsTooltip cursor={{ fill: '#F8FAFC' }} content={<AIBehaviorTooltip type="decisionConfidence" />} />
+                          <Bar dataKey="customer_count" radius={[0, 4, 4, 0]}>
+                            {decisionConfidenceData.map((entry, index) => (
+                              <Cell key={`cell-${index}`} fill={entry.fill} />
+                            ))}
+                            <LabelList
+                              dataKey="customer_count"
+                              position="right"
+                              content={(props) => {
+                                const { x, y, width, height, value } = props;
+                                if (value === undefined || value === null) return null;
+                                const total = filteredAiBehaviorCharts.filtered_total_customers || 0;
+                                const pct = total > 0 ? ((value / total) * 100).toFixed(1) : '0.0';
+                                const labelText = `${formatNumber(value)} (${pct}%)`;
+                                return (
+                                  <text
+                                    x={x + width + 8}
+                                    y={y + height / 2 + 4}
+                                    fill="#475569"
+                                    fontSize={11}
+                                    fontWeight={600}
+                                    textAnchor="start"
+                                  >
+                                    {labelText}
+                                  </text>
+                                );
+                              }}
+                            />
+                          </Bar>
+                        </BarChart>
+                      </ResponsiveContainer>
+                    ) : (
+                      <div style={{ flex: 1, display: 'flex', justifyContent: 'center', alignItems: 'center', background: '#F8FAFC', borderRadius: '12px', border: '1px dashed #E2E8F0', height: '100%' }}>
+                        <p style={{ color: '#64748B', fontSize: '0.9rem' }}>{aiBehaviorSnapshot.length > 0 ? "No customers match the active filters." : "Confidence metrics were not returned for this dataset."}</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
               </div>
 
               {/* AI Charts Grid Row 2 */}
